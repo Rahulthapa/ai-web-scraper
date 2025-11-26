@@ -10,7 +10,10 @@ function App() {
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+  // In production, API is on the same origin, so use relative URLs
+  // In development, use the VITE_API_URL or default to localhost
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 
+    (import.meta.env.PROD ? '' : 'http://localhost:8000')
 
   const fetchJobs = async () => {
     // In a real app, you'd fetch jobs from an endpoint

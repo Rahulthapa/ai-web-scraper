@@ -2,6 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install Node.js for frontend build
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    node --version && npm --version
+
 # Install system dependencies for Playwright
 # Fix for missing/replaced font packages in Debian Trixie
 RUN apt-get update && apt-get install -y \
@@ -34,6 +39,19 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy package files and install frontend dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy frontend source files
+COPY index.html ./
+COPY vite.config.js ./
+COPY src/ ./src/
+
+# Build frontend
+RUN npm run build
+
+# Copy Python requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -41,7 +59,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # This avoids the font package conflicts in Debian Trixie
 RUN playwright install chromium
 
-COPY . .
+# Copy application code
+COPY app/ ./app/
 
 EXPOSE 8000
 
