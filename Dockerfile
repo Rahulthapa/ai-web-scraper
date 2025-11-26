@@ -2,10 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install Node.js for frontend build
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+# Install curl and Node.js for frontend build
+RUN apt-get update && \
+    apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs && \
-    node --version && npm --version
+    node --version && npm --version && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install system dependencies for Playwright
 # Fix for missing/replaced font packages in Debian Trixie
