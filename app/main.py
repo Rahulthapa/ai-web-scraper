@@ -121,6 +121,7 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
             'filters': job_request.filters,
             'ai_prompt': job_request.ai_prompt,
             'export_format': job_request.export_format or 'json',
+            'use_javascript': job_request.use_javascript or False,
             'created_at': datetime.utcnow().isoformat(),
         }
         

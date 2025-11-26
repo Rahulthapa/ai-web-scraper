@@ -16,6 +16,7 @@ class ScrapeJobCreate(BaseModel):
     filters: Optional[Dict[str, Any]] = None
     ai_prompt: Optional[str] = None
     export_format: Optional[str] = "json"
+    use_javascript: Optional[bool] = False  # Use Playwright for JS-rendered pages
 
 
 class ScrapeJob(BaseModel):

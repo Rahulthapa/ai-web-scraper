@@ -26,8 +26,9 @@ class ScraperWorker:
             if not job:
                 raise Exception(f"Job {job_id} not found")
 
-            # Scrape the URL
-            scraped_data = await self.scraper.scrape(job['url'])
+            # Scrape the URL (with optional JavaScript rendering)
+            use_javascript = job.get('use_javascript', False)
+            scraped_data = await self.scraper.scrape(job['url'], use_javascript=use_javascript)
 
             # Apply AI filtering if prompt provided
             if job.get('ai_prompt'):

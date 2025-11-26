@@ -5,6 +5,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
   const [url, setUrl] = useState('')
   const [aiPrompt, setAiPrompt] = useState('')
   const [exportFormat, setExportFormat] = useState('json')
+  const [useJavascript, setUseJavascript] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -24,6 +25,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
           url,
           ai_prompt: aiPrompt || null,
           export_format: exportFormat,
+          use_javascript: useJavascript,
         }),
       })
 
@@ -39,6 +41,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
       setUrl('')
       setAiPrompt('')
       setExportFormat('json')
+      setUseJavascript(false)
     } catch (err) {
       setError(err.message)
       setLoading(false)
@@ -89,6 +92,20 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
             <option value="csv">CSV</option>
             <option value="excel">Excel</option>
           </select>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="useJavascript" className="checkbox-label">
+            <input
+              type="checkbox"
+              id="useJavascript"
+              checked={useJavascript}
+              onChange={(e) => setUseJavascript(e.target.checked)}
+              disabled={submitting}
+            />
+            <span>Use JavaScript Rendering (Playwright)</span>
+          </label>
+          <small>Enable for websites that require JavaScript to load content (React, Vue, Angular apps)</small>
         </div>
 
         {error && <div className="error-message">{error}</div>}
