@@ -38,15 +38,21 @@ Intelligent web scraping API with AI-powered filtering and data extraction, feat
 pip install -r requirements.txt
 ```
 
-2. **Set up environment variables:**
-Create a `.env` file:
-```env
-SUPABASE_URL=your_supabase_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
-```
+2. **Set up Supabase:**
+   - See [SETUP.md](SETUP.md) for detailed instructions on:
+     - Creating a Supabase project
+     - Getting your credentials
+     - Setting up database tables
+     - Configuring environment variables
+
+   Quick setup - create a `.env` file:
+   ```env
+   SUPABASE_URL=your_supabase_url
+   SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
 
 3. **Set up Supabase tables:**
-Create the following tables in your Supabase project:
+   Run these SQL commands in your Supabase SQL Editor:
 
 **scrape_jobs table:**
 ```sql

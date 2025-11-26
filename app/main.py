@@ -27,10 +27,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize storage and worker
-storage = Storage()
-worker = ScraperWorker()
+# Initialize storage and worker (lazy initialization to handle missing credentials gracefully)
+storage = None
+worker = None
 exporter = DataExporter()
+
+def get_storage():
+    """Get storage instance, initializing if needed"""
+    global storage
+    if storage is None:
+        try:
+            storage = Storage()
+        except ValueError as e:
+            # Re-raise with helpful message
+            raise HTTPException(
+                status_code=500,
+                detail=str(e)
+            )
+    return storage
+
+def get_worker():
+    """Get worker instance, initializing if needed"""
+    global worker
+    if worker is None:
+        storage_instance = get_storage()
+        worker = ScraperWorker(storage_instance=storage_instance)
+    return worker
 
 
 # Serve frontend static files if they exist
@@ -62,13 +84,29 @@ else:
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    """Health check endpoint"""
+    try:
+        # Try to initialize storage to check if credentials are set
+        get_storage()
+        return {
+            "status": "healthy",
+            "database": "connected"
+        }
+    except Exception as e:
+        return {
+            "status": "degraded",
+            "database": "not_configured",
+            "message": "Supabase credentials not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
+        }
 
 
 @app.post("/jobs", response_model=ScrapeJob, status_code=201)
 async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundTasks):
     """Create a new scraping job"""
     try:
+        storage_instance = get_storage()
+        worker_instance = get_worker()
+        
         job_id = str(uuid.uuid4())
         job_data = {
             'id': job_id,
@@ -80,16 +118,18 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
             'created_at': datetime.utcnow().isoformat(),
         }
         
-        job = await storage.create_job(job_data)
+        job = await storage_instance.create_job(job_data)
         
         if not job:
             raise HTTPException(status_code=500, detail="Failed to create job")
         
         # Process job in background
-        background_tasks.add_task(worker.process_job, job_id)
+        background_tasks.add_task(worker_instance.process_job, job_id)
         
         return job
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating job: {str(e)}")
 
@@ -97,7 +137,8 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
 @app.get("/jobs/{job_id}", response_model=ScrapeJob)
 async def get_job(job_id: str):
     """Get job status by ID"""
-    job = await storage.get_job(job_id)
+    storage_instance = get_storage()
+    job = await storage_instance.get_job(job_id)
     
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -108,13 +149,15 @@ async def get_job(job_id: str):
 @app.get("/jobs/{job_id}/results", response_model=ScrapeResult)
 async def get_job_results(job_id: str):
     """Get scraping results for a job"""
+    storage_instance = get_storage()
+    
     # Check if job exists
-    job = await storage.get_job(job_id)
+    job = await storage_instance.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
     # Get results
-    results = await storage.get_results(job_id)
+    results = await storage_instance.get_results(job_id)
     
     # Extract data from results
     data = [result.get('data', result) for result in results]
@@ -133,8 +176,10 @@ async def export_job_results(
     format: str = Query("json", regex="^(json|csv|excel)$")
 ):
     """Export job results in specified format"""
+    storage_instance = get_storage()
+    
     # Check if job exists
-    job = await storage.get_job(job_id)
+    job = await storage_instance.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
@@ -145,7 +190,7 @@ async def export_job_results(
         )
     
     # Get results
-    results = await storage.get_results(job_id)
+    results = await storage_instance.get_results(job_id)
     data = [result.get('data', result) for result in results]
     
     if not data:

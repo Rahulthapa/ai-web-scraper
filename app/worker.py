@@ -8,10 +8,10 @@ from .models import JobStatus
 
 
 class ScraperWorker:
-    def __init__(self):
+    def __init__(self, storage_instance=None):
         self.scraper = WebScraper()
         self.ai_filter = AIFilter()
-        self.storage = Storage()
+        self.storage = storage_instance or Storage()
 
     async def process_job(self, job_id: str) -> None:
         """Process a scraping job"""

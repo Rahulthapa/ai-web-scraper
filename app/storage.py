@@ -13,7 +13,27 @@ class Storage:
         supabase_key = os.getenv("SUPABASE_ANON_KEY")
 
         if not supabase_url or not supabase_key:
-            raise ValueError("Supabase credentials not found in environment")
+            missing = []
+            if not supabase_url:
+                missing.append("SUPABASE_URL")
+            if not supabase_key:
+                missing.append("SUPABASE_ANON_KEY")
+            
+            error_msg = (
+                f"Supabase credentials not found in environment.\n"
+                f"Missing variables: {', '.join(missing)}\n\n"
+                f"Please set the following environment variables:\n"
+                f"  - SUPABASE_URL: Your Supabase project URL\n"
+                f"  - SUPABASE_ANON_KEY: Your Supabase anonymous key\n\n"
+                f"You can:\n"
+                f"  1. Create a .env file in the project root with these variables\n"
+                f"  2. Set them as environment variables in your system\n"
+                f"  3. Set them in your deployment platform (Render, etc.)\n\n"
+                f"Example .env file:\n"
+                f"  SUPABASE_URL=https://your-project.supabase.co\n"
+                f"  SUPABASE_ANON_KEY=your-anon-key-here"
+            )
+            raise ValueError(error_msg)
 
         self.client: Client = create_client(supabase_url, supabase_key)
 
