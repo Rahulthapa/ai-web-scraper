@@ -58,7 +58,10 @@ def get_worker():
 # Serve frontend static files if they exist
 dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dist")
 if os.path.exists(dist_path):
-    app.mount("/static", StaticFiles(directory=os.path.join(dist_path, "assets")), name="static")
+    # Mount assets directory at /assets (Vite's default output path)
+    assets_path = os.path.join(dist_path, "assets")
+    if os.path.exists(assets_path):
+        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
     
     @app.get("/")
     @app.head("/")
