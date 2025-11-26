@@ -1,5 +1,6 @@
 import asyncio
 from typing import Dict, Any
+from datetime import datetime
 from .scraper import WebScraper
 from .ai_filter import AIFilter
 from .storage import Storage
@@ -43,7 +44,7 @@ class ScraperWorker:
             # Update job status to completed
             await self.storage.update_job(job_id, {
                 'status': JobStatus.COMPLETED.value,
-                'completed_at': 'now()'
+                'completed_at': datetime.utcnow().isoformat()
             })
 
         except Exception as e:
