@@ -61,6 +61,7 @@ if os.path.exists(dist_path):
     app.mount("/static", StaticFiles(directory=os.path.join(dist_path, "assets")), name="static")
     
     @app.get("/")
+    @app.head("/")
     async def serve_frontend():
         """Serve the frontend application"""
         index_path = os.path.join(dist_path, "index.html")
@@ -73,6 +74,7 @@ if os.path.exists(dist_path):
         }
 else:
     @app.get("/")
+    @app.head("/")
     async def root():
         return {
             "message": "AI Web Scraper API",
@@ -83,6 +85,7 @@ else:
 
 
 @app.get("/health")
+@app.head("/health")
 async def health_check():
     """Health check endpoint"""
     try:
