@@ -1,0 +1,7 @@
+{
+  "name": "ai-web-scraper",
+  "private": true,
+  "scripts": {
+    "build": "echo 'Python project - no build step needed'"
+  }
+}
