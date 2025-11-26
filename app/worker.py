@@ -75,13 +75,21 @@ class ScraperWorker:
                 filtered_data = [scraped_data]
 
             # Apply AI filtering if prompt provided
-            if job.get('ai_prompt'):
-                filtered_data = await self.ai_filter.filter_and_structure(
-                    scraped_data,
-                    job['ai_prompt']
-                )
-            else:
-                filtered_data = [scraped_data]
+            # Note: filtered_data is already set above based on crawl_mode
+            if job.get('ai_prompt') and filtered_data:
+                # Apply AI filtering to each page in the results
+                ai_filtered = []
+                for page_data in filtered_data:
+                    try:
+                        result = await self.ai_filter.filter_and_structure(
+                            page_data,
+                            job['ai_prompt']
+                        )
+                        ai_filtered.extend(result if isinstance(result, list) else [result])
+                    except Exception as e:
+                        # If AI filtering fails for a page, include original data
+                        ai_filtered.append(page_data)
+                filtered_data = ai_filtered
 
             # Save results
             await self.storage.save_results(job_id, filtered_data)

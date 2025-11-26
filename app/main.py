@@ -114,24 +114,44 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         worker_instance = get_worker()
         
         job_id = str(uuid.uuid4())
+        
+        # Build job data - only include fields that exist in the database
+        # This handles cases where migration hasn't been applied yet
         job_data = {
             'id': job_id,
             'url': str(job_request.url) if job_request.url else None,
             'status': JobStatus.PENDING.value,
-            'crawl_mode': job_request.crawl_mode or False,
-            'search_query': job_request.search_query,
-            'max_pages': job_request.max_pages or 10,
-            'max_depth': job_request.max_depth or 2,
-            'same_domain': job_request.same_domain if job_request.same_domain is not None else True,
             'filters': job_request.filters,
             'ai_prompt': job_request.ai_prompt,
             'export_format': job_request.export_format or 'json',
-            'use_javascript': job_request.use_javascript or False,
             'created_at': datetime.utcnow().isoformat(),
         }
         
+        # Add crawl-related fields only if crawl_mode is enabled
+        # This allows the code to work even if columns don't exist yet
+        if job_request.crawl_mode:
+            try:
+                # Try to add crawl fields - will fail if columns don't exist
+                job_data.update({
+                    'crawl_mode': True,
+                    'search_query': job_request.search_query,
+                    'max_pages': job_request.max_pages or 10,
+                    'max_depth': job_request.max_depth or 2,
+                    'same_domain': job_request.same_domain if job_request.same_domain is not None else True,
+                })
+            except Exception:
+                # If crawl columns don't exist, provide helpful error
+                raise HTTPException(
+                    status_code=500,
+                    detail="Crawl mode requires database migration. Please run the migration SQL in Supabase and refresh the schema cache."
+                )
+        
+        # Add JavaScript rendering field
+        if job_request.use_javascript:
+            job_data['use_javascript'] = True
+        
         # Validate: need either URL or search_query
-        if not job_data['url'] and not job_data['search_query']:
+        if not job_data.get('url') and not job_data.get('search_query'):
             raise HTTPException(
                 status_code=400,
                 detail="Either 'url' or 'search_query' must be provided"

@@ -49,22 +49,24 @@ class WebScraper:
 
     async def _scrape_static(self, url: str) -> Dict[str, Any]:
         """Scrape static HTML content"""
-        response = self.session.get(url, timeout=30, allow_redirects=True)
-        response.raise_for_status()
-        
-        # Detect content type
-        content_type = response.headers.get('Content-Type', '').lower()
-        
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Remove script and style elements
-        for script in soup(["script", "style", "noscript"]):
-            script.decompose()
-        
-        # Extract comprehensive data
-        data = await self._extract_structured_data(soup, url, response.text)
-        
-        return data
+        # Use async httpx for proper async support
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url, headers=self.session.headers)
+            response.raise_for_status()
+            
+            # Detect content type
+            content_type = response.headers.get('Content-Type', '').lower()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Remove script and style elements
+            for script in soup(["script", "style", "noscript"]):
+                script.decompose()
+            
+            # Extract comprehensive data
+            data = await self._extract_structured_data(soup, url, response.text)
+            
+            return data
 
     async def _scrape_with_playwright(self, url: str) -> Dict[str, Any]:
         """Scrape JavaScript-rendered content using Playwright"""
