@@ -1,7 +1,7 @@
 -- Migration: Add web crawling columns to scrape_jobs table
 -- Run this in your Supabase SQL Editor
 
--- Add new columns for web crawling functionality
+-- Step 1: Add new columns for web crawling functionality
 ALTER TABLE scrape_jobs 
 ADD COLUMN IF NOT EXISTS crawl_mode BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS search_query TEXT,
@@ -10,9 +10,33 @@ ADD COLUMN IF NOT EXISTS max_depth INTEGER DEFAULT 2,
 ADD COLUMN IF NOT EXISTS same_domain BOOLEAN DEFAULT TRUE,
 ADD COLUMN IF NOT EXISTS use_javascript BOOLEAN DEFAULT FALSE;
 
--- Make url nullable since it's optional in crawl mode
-ALTER TABLE scrape_jobs 
-ALTER COLUMN url DROP NOT NULL;
+-- Step 2: Make url nullable since it's optional in crawl mode
+-- Check if column exists and is NOT NULL first
+DO $$ 
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'scrape_jobs' 
+        AND column_name = 'url' 
+        AND is_nullable = 'NO'
+    ) THEN
+        ALTER TABLE scrape_jobs ALTER COLUMN url DROP NOT NULL;
+    END IF;
+END $$;
+
+-- Step 3: Refresh PostgREST schema cache (if you have permissions)
+-- Note: This might not work on managed Supabase - use dashboard instead
+-- NOTIFY pgrst, 'reload schema';
+
+-- Step 4: Verify columns were added
+SELECT 
+    column_name, 
+    data_type, 
+    is_nullable
+FROM information_schema.columns
+WHERE table_name = 'scrape_jobs'
+AND column_name IN ('crawl_mode', 'search_query', 'max_pages', 'max_depth', 'same_domain', 'use_javascript')
+ORDER BY column_name;
 
 -- Add comments for documentation
 COMMENT ON COLUMN scrape_jobs.crawl_mode IS 'Enable web crawling mode to discover and scrape multiple pages';
