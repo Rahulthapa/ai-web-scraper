@@ -2,10 +2,15 @@ import React, { useState } from 'react'
 import './JobForm.css'
 
 function JobForm({ onJobCreated, apiUrl, setLoading }) {
+  const [crawlMode, setCrawlMode] = useState(false)
   const [url, setUrl] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const [aiPrompt, setAiPrompt] = useState('')
   const [exportFormat, setExportFormat] = useState('json')
   const [useJavascript, setUseJavascript] = useState(false)
+  const [maxPages, setMaxPages] = useState(10)
+  const [maxDepth, setMaxDepth] = useState(2)
+  const [sameDomain, setSameDomain] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -22,7 +27,12 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          url,
+          url: crawlMode ? null : url,
+          search_query: crawlMode ? searchQuery : null,
+          crawl_mode: crawlMode,
+          max_pages: crawlMode ? maxPages : null,
+          max_depth: crawlMode ? maxDepth : null,
+          same_domain: crawlMode ? sameDomain : null,
           ai_prompt: aiPrompt || null,
           export_format: exportFormat,
           use_javascript: useJavascript,
@@ -39,9 +49,13 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
 
       // Reset form
       setUrl('')
+      setSearchQuery('')
       setAiPrompt('')
       setExportFormat('json')
       setUseJavascript(false)
+      setMaxPages(10)
+      setMaxDepth(2)
+      setSameDomain(true)
     } catch (err) {
       setError(err.message)
       setLoading(false)
@@ -55,17 +69,91 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
       <h2>Create Scraping Job</h2>
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="url">Website URL *</label>
-          <input
-            type="url"
-            id="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            required
-            disabled={submitting}
-          />
+          <label htmlFor="crawlMode" className="checkbox-label">
+            <input
+              type="checkbox"
+              id="crawlMode"
+              checked={crawlMode}
+              onChange={(e) => setCrawlMode(e.target.checked)}
+              disabled={submitting}
+            />
+            <span>🌐 Web Crawl Mode (Discover & scrape multiple pages)</span>
+          </label>
+          <small>Enable to crawl the web automatically instead of scraping a single page</small>
         </div>
+
+        {!crawlMode ? (
+          <div className="form-group">
+            <label htmlFor="url">Website URL *</label>
+            <input
+              type="url"
+              id="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://example.com"
+              required
+              disabled={submitting}
+            />
+          </div>
+        ) : (
+          <>
+            <div className="form-group">
+              <label htmlFor="searchQuery">Search Query or Starting URL *</label>
+              <input
+                type="text"
+                id="searchQuery"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="e.g., 'artificial intelligence' or 'https://example.com'"
+                required
+                disabled={submitting}
+              />
+              <small>Enter a search query to find pages, or a starting URL to crawl from</small>
+            </div>
+
+            <div className="form-group-row">
+              <div className="form-group">
+                <label htmlFor="maxPages">Max Pages</label>
+                <input
+                  type="number"
+                  id="maxPages"
+                  value={maxPages}
+                  onChange={(e) => setMaxPages(parseInt(e.target.value) || 10)}
+                  min="1"
+                  max="100"
+                  disabled={submitting}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="maxDepth">Max Depth</label>
+                <input
+                  type="number"
+                  id="maxDepth"
+                  value={maxDepth}
+                  onChange={(e) => setMaxDepth(parseInt(e.target.value) || 2)}
+                  min="1"
+                  max="5"
+                  disabled={submitting}
+                />
+                <small>How many link levels to follow</small>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="sameDomain" className="checkbox-label">
+                <input
+                  type="checkbox"
+                  id="sameDomain"
+                  checked={sameDomain}
+                  onChange={(e) => setSameDomain(e.target.checked)}
+                  disabled={submitting}
+                />
+                <span>Only crawl same domain</span>
+              </label>
+            </div>
+          </>
+        )}
 
         <div className="form-group">
           <label htmlFor="aiPrompt">AI Prompt (Optional)</label>
@@ -110,8 +198,8 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
 
         {error && <div className="error-message">{error}</div>}
 
-        <button type="submit" disabled={submitting || !url}>
-          {submitting ? 'Creating...' : 'Start Scraping'}
+        <button type="submit" disabled={submitting || (!crawlMode && !url) || (crawlMode && !searchQuery)}>
+          {submitting ? 'Creating...' : crawlMode ? 'Start Crawling' : 'Start Scraping'}
         </button>
       </form>
     </div>

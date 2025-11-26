@@ -116,14 +116,26 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         job_id = str(uuid.uuid4())
         job_data = {
             'id': job_id,
-            'url': str(job_request.url),
+            'url': str(job_request.url) if job_request.url else None,
             'status': JobStatus.PENDING.value,
+            'crawl_mode': job_request.crawl_mode or False,
+            'search_query': job_request.search_query,
+            'max_pages': job_request.max_pages or 10,
+            'max_depth': job_request.max_depth or 2,
+            'same_domain': job_request.same_domain if job_request.same_domain is not None else True,
             'filters': job_request.filters,
             'ai_prompt': job_request.ai_prompt,
             'export_format': job_request.export_format or 'json',
             'use_javascript': job_request.use_javascript or False,
             'created_at': datetime.utcnow().isoformat(),
         }
+        
+        # Validate: need either URL or search_query
+        if not job_data['url'] and not job_data['search_query']:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'url' or 'search_query' must be provided"
+            )
         
         job = await storage_instance.create_job(job_data)
         

@@ -12,7 +12,12 @@ class JobStatus(str, Enum):
 
 
 class ScrapeJobCreate(BaseModel):
-    url: HttpUrl
+    url: Optional[HttpUrl] = None  # Optional for crawl mode
+    search_query: Optional[str] = None  # For web crawling mode
+    crawl_mode: Optional[bool] = False  # Enable web crawling
+    max_pages: Optional[int] = 10  # Max pages to crawl
+    max_depth: Optional[int] = 2  # Max crawl depth
+    same_domain: Optional[bool] = True  # Only crawl same domain
     filters: Optional[Dict[str, Any]] = None
     ai_prompt: Optional[str] = None
     export_format: Optional[str] = "json"
