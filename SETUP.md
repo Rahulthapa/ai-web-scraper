@@ -32,11 +32,17 @@ Run these SQL commands in your Supabase SQL Editor (SQL Editor → New Query):
 -- Create scrape_jobs table
 CREATE TABLE scrape_jobs (
   id UUID PRIMARY KEY,
-  url TEXT NOT NULL,
+  url TEXT,  -- Made nullable for crawl mode
   status TEXT NOT NULL,
   filters JSONB,
   ai_prompt TEXT,
   export_format TEXT DEFAULT 'json',
+  crawl_mode BOOLEAN DEFAULT FALSE,
+  search_query TEXT,
+  max_pages INTEGER DEFAULT 10,
+  max_depth INTEGER DEFAULT 2,
+  same_domain BOOLEAN DEFAULT TRUE,
+  use_javascript BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   completed_at TIMESTAMP WITH TIME ZONE,
   error TEXT
