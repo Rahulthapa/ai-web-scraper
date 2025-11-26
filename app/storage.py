@@ -35,7 +35,19 @@ class Storage:
             )
             raise ValueError(error_msg)
 
-        self.client: Client = create_client(supabase_url, supabase_key)
+        # Create Supabase client
+        # Using positional arguments to avoid any proxy-related issues
+        try:
+            self.client: Client = create_client(supabase_url, supabase_key)
+        except TypeError as e:
+            if 'proxy' in str(e).lower():
+                # Fallback: try with explicit keyword arguments
+                self.client: Client = create_client(
+                    supabase_url=supabase_url,
+                    supabase_key=supabase_key
+                )
+            else:
+                raise
 
     async def create_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new scraping job"""
