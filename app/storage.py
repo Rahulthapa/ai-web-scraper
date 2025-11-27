@@ -2,9 +2,12 @@ from supabase import create_client, Client
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class Storage:
@@ -51,8 +54,15 @@ class Storage:
 
     async def create_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new scraping job"""
-        response = self.client.table('scrape_jobs').insert(job_data).execute()
-        return response.data[0] if response.data else None
+        try:
+            response = self.client.table('scrape_jobs').insert(job_data).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            # Log the error with full details
+            logger.error(f"Failed to create job in database: {str(e)}")
+            logger.error(f"Job data attempted: {job_data}")
+            # Re-raise to let the caller handle it
+            raise
 
     async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get a job by ID"""

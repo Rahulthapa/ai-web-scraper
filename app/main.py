@@ -6,12 +6,17 @@ from typing import Optional
 import uuid
 import json
 import os
+import logging
 from datetime import datetime
 
 from .models import ScrapeJobCreate, ScrapeJob, ScrapeResult, JobStatus
 from .storage import Storage
 from .worker import ScraperWorker
 from .exporter import DataExporter
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="AI Web Scraper",
@@ -128,25 +133,18 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         }
         
         # Add crawl-related fields only if crawl_mode is enabled
-        # This allows the code to work even if columns don't exist yet
+        # Note: These fields will cause an error if the database migration hasn't been run
         if job_request.crawl_mode:
-            try:
-                # Try to add crawl fields - will fail if columns don't exist
-                job_data.update({
-                    'crawl_mode': True,
-                    'search_query': job_request.search_query,
-                    'max_pages': job_request.max_pages or 10,
-                    'max_depth': job_request.max_depth or 2,
-                    'same_domain': job_request.same_domain if job_request.same_domain is not None else True,
-                })
-            except Exception:
-                # If crawl columns don't exist, provide helpful error
-                raise HTTPException(
-                    status_code=500,
-                    detail="Crawl mode requires database migration. Please run the migration SQL in Supabase and refresh the schema cache."
-                )
+            job_data.update({
+                'crawl_mode': True,
+                'search_query': job_request.search_query,
+                'max_pages': job_request.max_pages or 10,
+                'max_depth': job_request.max_depth or 2,
+                'same_domain': job_request.same_domain if job_request.same_domain is not None else True,
+            })
         
         # Add JavaScript rendering field
+        # Note: This field will cause an error if the database migration hasn't been run
         if job_request.use_javascript:
             job_data['use_javascript'] = True
         
@@ -170,6 +168,17 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
     except HTTPException:
         raise
     except Exception as e:
+        # Log the full error for debugging
+        logger.error(f"Error creating job: {str(e)}", exc_info=True)
+        
+        # Check if it's a database schema error
+        error_str = str(e).lower()
+        if 'crawl_mode' in error_str or 'pgrst' in error_str or 'column' in error_str:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database schema error: {str(e)}. Please run the migration SQL in Supabase and refresh the schema cache. See database_migration.sql for details."
+            )
+        
         raise HTTPException(status_code=500, detail=f"Error creating job: {str(e)}")
 
 
