@@ -58,11 +58,26 @@ class Storage:
             response = self.client.table('scrape_jobs').insert(job_data).execute()
             return response.data[0] if response.data else None
         except Exception as e:
+            # Extract error message from Supabase exception
+            error_msg = str(e)
+            
+            # Try to extract more details from the exception if it's a dict-like error
+            if hasattr(e, 'message'):
+                error_msg = str(e.message)
+            elif hasattr(e, 'args') and e.args:
+                # Supabase errors often have dict-like args
+                if isinstance(e.args[0], dict):
+                    error_msg = e.args[0].get('message', str(e))
+                else:
+                    error_msg = str(e.args[0])
+            
             # Log the error with full details
-            logger.error(f"Failed to create job in database: {str(e)}")
+            logger.error(f"Failed to create job in database: {error_msg}")
             logger.error(f"Job data attempted: {job_data}")
-            # Re-raise to let the caller handle it
-            raise
+            logger.error(f"Exception type: {type(e).__name__}")
+            
+            # Create a more user-friendly exception
+            raise Exception(error_msg) from e
 
     async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get a job by ID"""

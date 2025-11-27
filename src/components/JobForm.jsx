@@ -40,8 +40,29 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Failed to create job')
+        // Try to parse as JSON, but handle cases where response might be HTML or plain text
+        let errorMessage = `Failed to create job (${response.status})`
+        try {
+          const contentType = response.headers.get('content-type')
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json()
+            errorMessage = errorData.detail || errorData.message || errorMessage
+          } else {
+            // Response is not JSON, read as text
+            const text = await response.text()
+            errorMessage = text || errorMessage
+          }
+        } catch (parseError) {
+          // If parsing fails, try to get text
+          try {
+            const text = await response.text()
+            errorMessage = text || errorMessage
+          } catch {
+            // If all else fails, use status-based message
+            errorMessage = `Server error: ${response.status} ${response.statusText}`
+          }
+        }
+        throw new Error(errorMessage)
       }
 
       const job = await response.json()
