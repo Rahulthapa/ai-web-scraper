@@ -26,11 +26,17 @@ class ScrapeJobCreate(BaseModel):
 
 class ScrapeJob(BaseModel):
     id: str
-    url: str
+    url: Optional[str] = None  # Optional for crawl mode
     status: JobStatus
     filters: Optional[Dict[str, Any]] = None
     ai_prompt: Optional[str] = None
     export_format: str
+    crawl_mode: Optional[bool] = False
+    search_query: Optional[str] = None
+    max_pages: Optional[int] = None
+    max_depth: Optional[int] = None
+    same_domain: Optional[bool] = None
+    use_javascript: Optional[bool] = False
     created_at: datetime
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
