@@ -183,8 +183,16 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         if not job:
             raise HTTPException(status_code=500, detail="Failed to create job")
         
-        # Process job in background
-        background_tasks.add_task(worker_instance.process_job, job_id)
+        # Process job in background with proper error handling
+        async def process_job_wrapper():
+            """Wrapper to ensure background task errors are logged"""
+            try:
+                await worker_instance.process_job(job_id)
+            except Exception as e:
+                logger.error(f"Background task failed for job {job_id}: {str(e)}", exc_info=True)
+        
+        background_tasks.add_task(process_job_wrapper)
+        logger.info(f"Job {job_id} created and queued for processing")
         
         return job
         

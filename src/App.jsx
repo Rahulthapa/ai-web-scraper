@@ -28,24 +28,39 @@ function App() {
   }
 
   const pollJobStatus = async (jobId) => {
-    const maxAttempts = 60 // Poll for up to 5 minutes (5 second intervals)
+    const maxAttempts = 120 // Poll for up to 10 minutes (5 second intervals)
     let attempts = 0
 
     const poll = async () => {
-      if (attempts >= maxAttempts) return
+      if (attempts >= maxAttempts) {
+        console.warn(`Polling timeout for job ${jobId} after ${maxAttempts} attempts`)
+        setLoading(false)
+        // Update job to show it's taking too long
+        setJobs(prev => prev.map(j => 
+          j.id === jobId ? { ...j, status: 'timeout', error: 'Job is taking longer than expected' } : j
+        ))
+        return
+      }
 
       try {
         const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`)
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
         const job = await response.json()
+
+        console.log(`Job ${jobId} status: ${job.status} (attempt ${attempts + 1}/${maxAttempts})`)
 
         // Update job in list
         setJobs(prev => prev.map(j => j.id === jobId ? job : j))
         setSelectedJob(job)
 
         if (job.status === 'completed') {
+          console.log(`Job ${jobId} completed, fetching results`)
           // Fetch results
-          fetchResults(jobId)
+          await fetchResults(jobId)
         } else if (job.status === 'failed') {
+          console.error(`Job ${jobId} failed:`, job.error)
           setLoading(false)
         } else {
           // Continue polling
@@ -53,8 +68,14 @@ function App() {
           setTimeout(poll, 5000)
         }
       } catch (error) {
-        console.error('Error polling job status:', error)
-        setLoading(false)
+        console.error(`Error polling job status for ${jobId}:`, error)
+        attempts++
+        if (attempts >= maxAttempts) {
+          setLoading(false)
+        } else {
+          // Retry after error
+          setTimeout(poll, 5000)
+        }
       }
     }
 
