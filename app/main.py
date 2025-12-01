@@ -107,12 +107,24 @@ else:
     @app.get("/")
     @app.head("/")
     async def root():
-        return {
-            "message": "AI Web Scraper API",
-            "version": "1.0.0",
-            "status": "running",
-            "frontend": "Build the frontend with 'npm run build' to enable the web interface"
-        }
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": "AI Web Scraper API",
+                "version": "1.0.0",
+                "status": "running",
+                "frontend": "not_built",
+                "instructions": {
+                    "step1": "Install Node.js from https://nodejs.org/ (version 18+)",
+                    "step2": "Run: npm install",
+                    "step3": "Run: npm run build",
+                    "step4": "Restart the server",
+                    "alternative": "Or run 'npm run dev' in a separate terminal for development mode"
+                },
+                "api_docs": "/docs",
+                "health_check": "/health"
+            }
+        )
 
 
 @app.get("/health")
