@@ -239,28 +239,37 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
 async def get_job(job_id: str):
     """Get job status by ID"""
     try:
+        logger.info(f"Fetching job {job_id}")
         storage_instance = get_storage()
         job = await storage_instance.get_job(job_id)
         
         if not job:
+            logger.warning(f"Job {job_id} not found")
             raise HTTPException(status_code=404, detail="Job not found")
+        
+        logger.debug(f"Raw job data: {job}")
+        
+        # Normalize status to ensure it's a valid JobStatus enum value
+        status = job.get('status', 'pending')
+        if status not in ['pending', 'running', 'completed', 'failed']:
+            logger.warning(f"Invalid status '{status}' for job {job_id}, defaulting to 'pending'")
+            status = 'pending'
         
         # Normalize and ensure all fields are present
         normalized_job = {
             'id': str(job.get('id', job_id)),
             'url': job.get('url'),
-            'status': job.get('status', 'pending'),
+            'status': status,
             'filters': job.get('filters'),
             'ai_prompt': job.get('ai_prompt'),
             'export_format': job.get('export_format', 'json'),
-            'crawl_mode': job.get('crawl_mode', False),
+            'crawl_mode': bool(job.get('crawl_mode', False)) if job.get('crawl_mode') is not None else False,
             'search_query': job.get('search_query'),
             'max_pages': job.get('max_pages'),
             'max_depth': job.get('max_depth'),
             'same_domain': job.get('same_domain'),
-            'use_javascript': job.get('use_javascript', False),
+            'use_javascript': bool(job.get('use_javascript', False)) if job.get('use_javascript') is not None else False,
             'error': job.get('error'),
-            'completed_at': job.get('completed_at'),
         }
         
         # Handle created_at - convert to datetime object
@@ -268,16 +277,36 @@ async def get_job(job_id: str):
         try:
             if created_at:
                 if isinstance(created_at, str):
-                    # Supabase returns ISO format strings
-                    # Remove timezone info if present and parse
-                    created_at_clean = created_at.replace('Z', '').replace('+00:00', '')
-                    if '.' in created_at_clean:
-                        # Has microseconds
-                        normalized_job['created_at'] = datetime.fromisoformat(created_at_clean.split('.')[0])
-                    elif 'T' in created_at_clean:
-                        normalized_job['created_at'] = datetime.fromisoformat(created_at_clean.split('+')[0].split('.')[0])
-                    else:
-                        normalized_job['created_at'] = datetime.strptime(created_at_clean, '%Y-%m-%d %H:%M:%S')
+                    # Try multiple datetime formats
+                    created_at_clean = created_at.strip()
+                    parsed = False
+                    
+                    # Try dateutil parser first (more flexible)
+                    try:
+                        from dateutil import parser as date_parser
+                        normalized_job['created_at'] = date_parser.parse(created_at_clean)
+                        parsed = True
+                    except (ImportError, ValueError, AttributeError):
+                        pass
+                    
+                    if not parsed:
+                        # Try ISO format
+                        try:
+                            # Remove timezone info
+                            created_at_clean = created_at_clean.replace('Z', '').replace('+00:00', '').strip()
+                            if 'T' in created_at_clean:
+                                # Remove microseconds if present
+                                if '.' in created_at_clean:
+                                    parts = created_at_clean.split('.')
+                                    created_at_clean = parts[0]
+                                normalized_job['created_at'] = datetime.fromisoformat(created_at_clean)
+                            else:
+                                # Try standard format
+                                normalized_job['created_at'] = datetime.strptime(created_at_clean, '%Y-%m-%d %H:%M:%S')
+                            parsed = True
+                        except (ValueError, AttributeError):
+                            logger.warning(f"Could not parse created_at: {created_at}, using current time")
+                            normalized_job['created_at'] = datetime.utcnow()
                 elif hasattr(created_at, 'isoformat'):
                     normalized_job['created_at'] = created_at
                 else:
@@ -293,13 +322,28 @@ async def get_job(job_id: str):
         try:
             if completed_at:
                 if isinstance(completed_at, str):
-                    completed_at_clean = completed_at.replace('Z', '').replace('+00:00', '')
-                    if '.' in completed_at_clean:
-                        normalized_job['completed_at'] = datetime.fromisoformat(completed_at_clean.split('.')[0])
-                    elif 'T' in completed_at_clean:
-                        normalized_job['completed_at'] = datetime.fromisoformat(completed_at_clean.split('+')[0].split('.')[0])
-                    else:
-                        normalized_job['completed_at'] = datetime.strptime(completed_at_clean, '%Y-%m-%d %H:%M:%S')
+                    completed_at_clean = completed_at.strip()
+                    parsed = False
+                    
+                    # Try dateutil parser first
+                    try:
+                        from dateutil import parser as date_parser
+                        normalized_job['completed_at'] = date_parser.parse(completed_at_clean)
+                        parsed = True
+                    except (ImportError, ValueError, AttributeError):
+                        pass
+                    
+                    if not parsed:
+                        try:
+                            completed_at_clean = completed_at_clean.replace('Z', '').replace('+00:00', '').strip()
+                            if 'T' in completed_at_clean:
+                                if '.' in completed_at_clean:
+                                    completed_at_clean = completed_at_clean.split('.')[0]
+                                normalized_job['completed_at'] = datetime.fromisoformat(completed_at_clean)
+                            else:
+                                normalized_job['completed_at'] = datetime.strptime(completed_at_clean, '%Y-%m-%d %H:%M:%S')
+                        except (ValueError, AttributeError):
+                            normalized_job['completed_at'] = None
                 elif hasattr(completed_at, 'isoformat'):
                     normalized_job['completed_at'] = completed_at
                 else:
@@ -312,22 +356,56 @@ async def get_job(job_id: str):
         
         # Validate and return using response model
         try:
-            return ScrapeJob(**normalized_job)
+            result = ScrapeJob(**normalized_job)
+            logger.info(f"Successfully fetched job {job_id}")
+            return result
         except Exception as model_error:
             logger.error(f"Pydantic validation error for job {job_id}: {model_error}")
-            logger.error(f"Job data keys: {list(normalized_job.keys())}")
-            logger.error(f"Job data: {normalized_job}")
-            # Return as JSON if model validation fails (for debugging)
-            return JSONResponse(content={
-                **normalized_job,
-                '_validation_error': str(model_error),
-                '_raw_job': job
-            })
+            logger.error(f"Model error type: {type(model_error).__name__}")
+            logger.error(f"Normalized job keys: {list(normalized_job.keys())}")
+            logger.error(f"Normalized job values: {normalized_job}")
+            
+            # Try to return a simplified version that matches the model
+            # Remove None values that might cause issues
+            simplified_job = {k: v for k, v in normalized_job.items() if v is not None or k in ['id', 'status', 'created_at', 'export_format']}
+            
+            try:
+                # Try again with simplified data
+                result = ScrapeJob(**simplified_job)
+                return result
+            except Exception as e2:
+                logger.error(f"Second validation attempt also failed: {e2}")
+                # Last resort: return minimal valid job object
+                try:
+                    minimal_job = {
+                        'id': normalized_job.get('id', job_id),
+                        'status': JobStatus.PENDING,
+                        'export_format': normalized_job.get('export_format', 'json'),
+                        'created_at': normalized_job.get('created_at', datetime.utcnow()),
+                        'url': normalized_job.get('url'),
+                        'crawl_mode': normalized_job.get('crawl_mode', False),
+                        'use_javascript': normalized_job.get('use_javascript', False),
+                    }
+                    return ScrapeJob(**minimal_job)
+                except Exception as e3:
+                    logger.error(f"Even minimal job creation failed: {e3}")
+                    # Return raw data as JSON (bypass Pydantic)
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            'id': job_id,
+                            'status': status,
+                            'url': job.get('url'),
+                            'created_at': job.get('created_at'),
+                            'error': f'Validation error: {str(model_error)}'
+                        }
+                    )
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting job {job_id}: {str(e)}", exc_info=True)
+        logger.error(f"Exception type: {type(e).__name__}")
         raise HTTPException(
             status_code=500,
             detail=f"Error fetching job: {str(e)}"
