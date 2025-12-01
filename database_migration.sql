@@ -40,7 +40,7 @@ ORDER BY column_name;
 
 -- Add comments for documentation
 COMMENT ON COLUMN scrape_jobs.crawl_mode IS 'Enable web crawling mode to discover and scrape multiple pages';
-COMMENT ON COLUMN scrape_jobs.search_query IS 'Search query for finding pages to crawl';
+COMMENT ON COLUMN scrape_jobs.search_query IS 'Search query for finding pages to crawl (also used for Google Maps searches)';
 COMMENT ON COLUMN scrape_jobs.max_pages IS 'Maximum number of pages to crawl';
 COMMENT ON COLUMN scrape_jobs.max_depth IS 'Maximum depth of links to follow';
 COMMENT ON COLUMN scrape_jobs.same_domain IS 'Only crawl pages on the same domain';
