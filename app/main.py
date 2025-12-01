@@ -235,19 +235,28 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         raise HTTPException(status_code=500, detail=f"Error creating job: {str(e)}")
 
 
-@app.get("/jobs/{job_id}")
+@app.get("/jobs/{job_id}", response_model=ScrapeJob)
 async def get_job(job_id: str):
-    """Get job status by ID"""
+    """Get job status by ID - always returns ScrapeJob model"""
     try:
         logger.info(f"Fetching job {job_id}")
         storage_instance = get_storage()
-        job = await storage_instance.get_job(job_id)
+        
+        try:
+            job = await storage_instance.get_job(job_id)
+        except Exception as storage_error:
+            logger.error(f"Storage error fetching job {job_id}: {storage_error}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database error: {str(storage_error)}"
+            )
         
         if not job:
             logger.warning(f"Job {job_id} not found")
             raise HTTPException(status_code=404, detail="Job not found")
         
-        logger.debug(f"Raw job data: {job}")
+        logger.debug(f"Raw job data keys: {list(job.keys()) if isinstance(job, dict) else 'not a dict'}")
+        logger.debug(f"Raw job data type: {type(job)}")
         
         # Normalize status to ensure it's a valid JobStatus enum value
         status = job.get('status', 'pending')
@@ -354,6 +363,14 @@ async def get_job(job_id: str):
             logger.warning(f"Error parsing completed_at: {e}")
             normalized_job['completed_at'] = None
         
+        # Ensure status is JobStatus enum before validation
+        if isinstance(normalized_job.get('status'), str):
+            try:
+                normalized_job['status'] = JobStatus(normalized_job['status'])
+            except ValueError:
+                logger.warning(f"Invalid status '{normalized_job.get('status')}', using PENDING")
+                normalized_job['status'] = JobStatus.PENDING
+        
         # Validate and return using response model
         try:
             result = ScrapeJob(**normalized_job)
@@ -362,44 +379,78 @@ async def get_job(job_id: str):
         except Exception as model_error:
             logger.error(f"Pydantic validation error for job {job_id}: {model_error}")
             logger.error(f"Model error type: {type(model_error).__name__}")
+            
+            # Get detailed validation errors if available
+            if hasattr(model_error, 'errors'):
+                logger.error(f"Validation errors: {model_error.errors()}")
+            
             logger.error(f"Normalized job keys: {list(normalized_job.keys())}")
             logger.error(f"Normalized job values: {normalized_job}")
             
-            # Try to return a simplified version that matches the model
-            # Remove None values that might cause issues
-            simplified_job = {k: v for k, v in normalized_job.items() if v is not None or k in ['id', 'status', 'created_at', 'export_format']}
-            
+            # Try to fix common issues
             try:
-                # Try again with simplified data
-                result = ScrapeJob(**simplified_job)
+                # Ensure all required fields are present and correct type
+                fixed_job = {
+                    'id': str(normalized_job.get('id', job_id)),
+                    'status': normalized_job.get('status', JobStatus.PENDING),
+                    'export_format': normalized_job.get('export_format', 'json'),
+                    'created_at': normalized_job.get('created_at', datetime.utcnow()),
+                    'url': normalized_job.get('url'),
+                    'filters': normalized_job.get('filters'),
+                    'ai_prompt': normalized_job.get('ai_prompt'),
+                    'crawl_mode': bool(normalized_job.get('crawl_mode', False)),
+                    'search_query': normalized_job.get('search_query'),
+                    'max_pages': normalized_job.get('max_pages'),
+                    'max_depth': normalized_job.get('max_depth'),
+                    'same_domain': normalized_job.get('same_domain'),
+                    'use_javascript': bool(normalized_job.get('use_javascript', False)),
+                    'completed_at': normalized_job.get('completed_at'),
+                    'error': normalized_job.get('error'),
+                }
+                
+                # Ensure status is JobStatus enum
+                if isinstance(fixed_job['status'], str):
+                    fixed_job['status'] = JobStatus(fixed_job['status'])
+                
+                result = ScrapeJob(**fixed_job)
+                logger.info(f"Successfully created job after fixes")
                 return result
             except Exception as e2:
-                logger.error(f"Second validation attempt also failed: {e2}")
+                logger.error(f"Second validation attempt failed: {e2}")
                 # Last resort: return minimal valid job object
                 try:
-                    minimal_job = {
-                        'id': normalized_job.get('id', job_id),
-                        'status': JobStatus.PENDING,
-                        'export_format': normalized_job.get('export_format', 'json'),
-                        'created_at': normalized_job.get('created_at', datetime.utcnow()),
-                        'url': normalized_job.get('url'),
-                        'crawl_mode': normalized_job.get('crawl_mode', False),
-                        'use_javascript': normalized_job.get('use_javascript', False),
-                    }
-                    return ScrapeJob(**minimal_job)
+                    return ScrapeJob(
+                        id=str(job_id),
+                        status=JobStatus.PENDING,
+                        export_format='json',
+                        created_at=datetime.utcnow(),
+                        url=normalized_job.get('url'),
+                        crawl_mode=False,
+                        use_javascript=False,
+                        error=f'Data parsing error: {str(model_error)}'
+                    )
                 except Exception as e3:
                     logger.error(f"Even minimal job creation failed: {e3}")
-                    # Return raw data as JSON (bypass Pydantic)
-                    return JSONResponse(
-                        status_code=200,
-                        content={
-                            'id': job_id,
-                            'status': status,
-                            'url': job.get('url'),
-                            'created_at': job.get('created_at'),
-                            'error': f'Validation error: {str(model_error)}'
-                        }
-                    )
+                    # Absolute last resort: create job with all defaults
+                    # This should never fail
+                    try:
+                        return ScrapeJob(
+                            id=str(job_id),
+                            status=JobStatus.PENDING,
+                            export_format='json',
+                            created_at=datetime.utcnow(),
+                            url=None,
+                            crawl_mode=False,
+                            use_javascript=False,
+                            error=f'Data parsing error: {str(model_error)}'
+                        )
+                    except Exception as e4:
+                        # This should never happen, but if it does, raise HTTPException
+                        logger.critical(f"CRITICAL: Cannot create ScrapeJob object: {e4}")
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Internal error: Unable to format job data. Original error: {str(model_error)}"
+                        )
         
     except HTTPException:
         raise
