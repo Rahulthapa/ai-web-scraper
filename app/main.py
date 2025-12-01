@@ -130,7 +130,63 @@ else:
 @app.get("/health")
 @app.head("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - tests database connection"""
+    try:
+        # Test database connection
+        storage_instance = get_storage()
+        # Try a simple query
+        test_result = storage_instance.client.table('scrape_jobs').select('id').limit(1).execute()
+        return {
+            "status": "ok",
+            "database": "connected",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "error",
+            "database": "disconnected",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+
+@app.get("/test/job/{job_id}")
+async def test_get_job(job_id: str):
+    """Test endpoint to diagnose job fetching issues - returns raw data"""
+    try:
+        logger.info(f"TEST: Fetching job {job_id}")
+        storage_instance = get_storage()
+        
+        # Try to fetch raw data
+        response = storage_instance.client.table('scrape_jobs').select('*').eq('id', job_id).maybeSingle().execute()
+        
+        if not response.data:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Job not found", "job_id": job_id}
+            )
+        
+        # Return raw data for inspection
+        return JSONResponse(
+            status_code=200,
+            content={
+                "job_id": job_id,
+                "raw_data": response.data,
+                "data_type": str(type(response.data)),
+                "keys": list(response.data.keys()) if isinstance(response.data, dict) else "not a dict"
+            }
+        )
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "traceback": traceback.format_exc()
+            }
+        )
     try:
         # Try to initialize storage to check if credentials are set
         get_storage()
@@ -240,12 +296,23 @@ async def get_job(job_id: str):
     """Get job status by ID - always returns ScrapeJob model"""
     try:
         logger.info(f"Fetching job {job_id}")
-        storage_instance = get_storage()
+        
+        try:
+            storage_instance = get_storage()
+        except Exception as storage_init_error:
+            logger.error(f"Failed to initialize storage: {storage_init_error}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database connection error: {str(storage_init_error)}"
+            )
         
         try:
             job = await storage_instance.get_job(job_id)
         except Exception as storage_error:
-            logger.error(f"Storage error fetching job {job_id}: {storage_error}", exc_info=True)
+            import traceback
+            error_traceback = traceback.format_exc()
+            logger.error(f"Storage error fetching job {job_id}: {storage_error}")
+            logger.error(f"Full traceback:\n{error_traceback}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Database error: {str(storage_error)}"
