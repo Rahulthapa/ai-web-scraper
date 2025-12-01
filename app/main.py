@@ -196,12 +196,22 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
             raise HTTPException(status_code=500, detail="Failed to create job")
         
         # Process job in background with proper error handling
+        # FastAPI BackgroundTasks supports async functions directly
         async def process_job_wrapper():
             """Wrapper to ensure background task errors are logged"""
             try:
                 await worker_instance.process_job(job_id)
             except Exception as e:
                 logger.error(f"Background task failed for job {job_id}: {str(e)}", exc_info=True)
+                # Update job status to failed
+                try:
+                    storage = get_storage()
+                    await storage.update_job(job_id, {
+                        'status': JobStatus.FAILED.value,
+                        'error': str(e)
+                    })
+                except Exception as update_error:
+                    logger.error(f"Failed to update job status: {update_error}")
         
         background_tasks.add_task(process_job_wrapper)
         logger.info(f"Job {job_id} created and queued for processing")
@@ -225,16 +235,103 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         raise HTTPException(status_code=500, detail=f"Error creating job: {str(e)}")
 
 
-@app.get("/jobs/{job_id}", response_model=ScrapeJob)
+@app.get("/jobs/{job_id}")
 async def get_job(job_id: str):
     """Get job status by ID"""
-    storage_instance = get_storage()
-    job = await storage_instance.get_job(job_id)
-    
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    return job
+    try:
+        storage_instance = get_storage()
+        job = await storage_instance.get_job(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Normalize and ensure all fields are present
+        normalized_job = {
+            'id': str(job.get('id', job_id)),
+            'url': job.get('url'),
+            'status': job.get('status', 'pending'),
+            'filters': job.get('filters'),
+            'ai_prompt': job.get('ai_prompt'),
+            'export_format': job.get('export_format', 'json'),
+            'crawl_mode': job.get('crawl_mode', False),
+            'search_query': job.get('search_query'),
+            'max_pages': job.get('max_pages'),
+            'max_depth': job.get('max_depth'),
+            'same_domain': job.get('same_domain'),
+            'use_javascript': job.get('use_javascript', False),
+            'error': job.get('error'),
+            'completed_at': job.get('completed_at'),
+        }
+        
+        # Handle created_at - convert to datetime object
+        created_at = job.get('created_at')
+        try:
+            if created_at:
+                if isinstance(created_at, str):
+                    # Supabase returns ISO format strings
+                    # Remove timezone info if present and parse
+                    created_at_clean = created_at.replace('Z', '').replace('+00:00', '')
+                    if '.' in created_at_clean:
+                        # Has microseconds
+                        normalized_job['created_at'] = datetime.fromisoformat(created_at_clean.split('.')[0])
+                    elif 'T' in created_at_clean:
+                        normalized_job['created_at'] = datetime.fromisoformat(created_at_clean.split('+')[0].split('.')[0])
+                    else:
+                        normalized_job['created_at'] = datetime.strptime(created_at_clean, '%Y-%m-%d %H:%M:%S')
+                elif hasattr(created_at, 'isoformat'):
+                    normalized_job['created_at'] = created_at
+                else:
+                    normalized_job['created_at'] = datetime.utcnow()
+            else:
+                normalized_job['created_at'] = datetime.utcnow()
+        except Exception as e:
+            logger.warning(f"Error parsing created_at: {e}, using current time")
+            normalized_job['created_at'] = datetime.utcnow()
+        
+        # Handle completed_at
+        completed_at = job.get('completed_at')
+        try:
+            if completed_at:
+                if isinstance(completed_at, str):
+                    completed_at_clean = completed_at.replace('Z', '').replace('+00:00', '')
+                    if '.' in completed_at_clean:
+                        normalized_job['completed_at'] = datetime.fromisoformat(completed_at_clean.split('.')[0])
+                    elif 'T' in completed_at_clean:
+                        normalized_job['completed_at'] = datetime.fromisoformat(completed_at_clean.split('+')[0].split('.')[0])
+                    else:
+                        normalized_job['completed_at'] = datetime.strptime(completed_at_clean, '%Y-%m-%d %H:%M:%S')
+                elif hasattr(completed_at, 'isoformat'):
+                    normalized_job['completed_at'] = completed_at
+                else:
+                    normalized_job['completed_at'] = None
+            else:
+                normalized_job['completed_at'] = None
+        except Exception as e:
+            logger.warning(f"Error parsing completed_at: {e}")
+            normalized_job['completed_at'] = None
+        
+        # Validate and return using response model
+        try:
+            return ScrapeJob(**normalized_job)
+        except Exception as model_error:
+            logger.error(f"Pydantic validation error for job {job_id}: {model_error}")
+            logger.error(f"Job data keys: {list(normalized_job.keys())}")
+            logger.error(f"Job data: {normalized_job}")
+            # Return as JSON if model validation fails (for debugging)
+            return JSONResponse(content={
+                **normalized_job,
+                '_validation_error': str(model_error),
+                '_raw_job': job
+            })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting job {job_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching job: {str(e)}"
+        )
 
 
 @app.get("/jobs/{job_id}/results", response_model=ScrapeResult)

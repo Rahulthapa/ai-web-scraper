@@ -81,8 +81,64 @@ class Storage:
 
     async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get a job by ID"""
-        response = self.client.table('scrape_jobs').select('*').eq('id', job_id).maybeSingle().execute()
-        return response.data
+        try:
+            response = self.client.table('scrape_jobs').select('*').eq('id', job_id).maybeSingle().execute()
+            
+            if not response.data:
+                logger.debug(f"Job {job_id} not found in database")
+                return None
+            
+            job = response.data.copy()  # Make a copy to avoid modifying original
+            
+            # Ensure all optional fields have defaults
+            defaults = {
+                'url': None,
+                'filters': None,
+                'ai_prompt': None,
+                'export_format': 'json',
+                'crawl_mode': False,
+                'search_query': None,
+                'max_pages': None,
+                'max_depth': None,
+                'same_domain': None,
+                'use_javascript': False,
+                'error': None,
+                'completed_at': None
+            }
+            
+            for key, default_value in defaults.items():
+                if key not in job:
+                    job[key] = default_value
+            
+            # Keep datetime as-is (let main.py handle conversion)
+            # Just ensure they're strings if they exist
+            if 'created_at' in job and job['created_at'] and not isinstance(job['created_at'], str):
+                if hasattr(job['created_at'], 'isoformat'):
+                    job['created_at'] = job['created_at'].isoformat()
+                else:
+                    job['created_at'] = str(job['created_at'])
+            
+            if 'completed_at' in job and job['completed_at'] and not isinstance(job['completed_at'], str):
+                if hasattr(job['completed_at'], 'isoformat'):
+                    job['completed_at'] = job['completed_at'].isoformat()
+                else:
+                    job['completed_at'] = str(job['completed_at'])
+            
+            logger.debug(f"Successfully fetched job {job_id}")
+            return job
+            
+        except Exception as e:
+            logger.error(f"Error fetching job {job_id}: {str(e)}", exc_info=True)
+            # Try to extract more error details
+            error_details = str(e)
+            if hasattr(e, 'message'):
+                error_details = str(e.message)
+            elif hasattr(e, 'args') and e.args:
+                if isinstance(e.args[0], dict):
+                    error_details = e.args[0].get('message', str(e))
+                else:
+                    error_details = str(e.args[0])
+            raise Exception(f"Database error: {error_details}") from e
 
     async def update_job(self, job_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Update a job"""
