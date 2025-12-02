@@ -167,24 +167,39 @@ async def test_get_job(job_id: str):
                 content={"error": "Job not found", "job_id": job_id}
             )
         
+        # Convert datetime objects to strings for JSON serialization
+        raw_data = response.data.copy()
+        for key, value in raw_data.items():
+            if hasattr(value, 'isoformat'):
+                raw_data[key] = value.isoformat()
+            elif value is None:
+                raw_data[key] = None
+        
         # Return raw data for inspection
         return JSONResponse(
             status_code=200,
             content={
                 "job_id": job_id,
-                "raw_data": response.data,
+                "raw_data": raw_data,
                 "data_type": str(type(response.data)),
-                "keys": list(response.data.keys()) if isinstance(response.data, dict) else "not a dict"
+                "keys": list(response.data.keys()) if isinstance(response.data, dict) else "not a dict",
+                "status": raw_data.get('status'),
+                "export_format": raw_data.get('export_format'),
+                "has_created_at": 'created_at' in raw_data,
+                "created_at_type": str(type(response.data.get('created_at'))) if response.data.get('created_at') else None
             }
         )
     except Exception as e:
         import traceback
+        error_traceback = traceback.format_exc()
+        logger.error(f"TEST endpoint error: {e}")
+        logger.error(f"Full traceback:\n{error_traceback}")
         return JSONResponse(
             status_code=500,
             content={
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "traceback": traceback.format_exc()
+                "traceback": error_traceback
             }
         )
     try:
@@ -332,13 +347,18 @@ async def get_job(job_id: str):
             status = 'pending'
         
         # Normalize and ensure all fields are present
+        # CRITICAL: export_format must be a string, not None
+        export_format = job.get('export_format')
+        if not export_format or not isinstance(export_format, str):
+            export_format = 'json'
+        
         normalized_job = {
             'id': str(job.get('id', job_id)),
             'url': job.get('url'),
             'status': status,
             'filters': job.get('filters'),
             'ai_prompt': job.get('ai_prompt'),
-            'export_format': job.get('export_format', 'json'),
+            'export_format': export_format,  # Always a string
             'crawl_mode': bool(job.get('crawl_mode', False)) if job.get('crawl_mode') is not None else False,
             'search_query': job.get('search_query'),
             'max_pages': job.get('max_pages'),
@@ -440,19 +460,43 @@ async def get_job(job_id: str):
         
         # Validate and return using response model
         try:
+            # Double-check required fields before validation
+            if not normalized_job.get('id'):
+                normalized_job['id'] = str(job_id)
+            if not normalized_job.get('status'):
+                normalized_job['status'] = JobStatus.PENDING
+            if not normalized_job.get('export_format'):
+                normalized_job['export_format'] = 'json'
+            if not normalized_job.get('created_at'):
+                normalized_job['created_at'] = datetime.utcnow()
+            
+            # Ensure status is JobStatus enum
+            if isinstance(normalized_job.get('status'), str):
+                try:
+                    normalized_job['status'] = JobStatus(normalized_job['status'])
+                except ValueError:
+                    normalized_job['status'] = JobStatus.PENDING
+            
             result = ScrapeJob(**normalized_job)
             logger.info(f"Successfully fetched job {job_id}")
             return result
         except Exception as model_error:
+            import traceback
+            error_traceback = traceback.format_exc()
             logger.error(f"Pydantic validation error for job {job_id}: {model_error}")
             logger.error(f"Model error type: {type(model_error).__name__}")
+            logger.error(f"Full traceback:\n{error_traceback}")
             
             # Get detailed validation errors if available
             if hasattr(model_error, 'errors'):
-                logger.error(f"Validation errors: {model_error.errors()}")
+                try:
+                    validation_errors = model_error.errors()
+                    logger.error(f"Validation errors: {validation_errors}")
+                except:
+                    pass
             
             logger.error(f"Normalized job keys: {list(normalized_job.keys())}")
-            logger.error(f"Normalized job values: {normalized_job}")
+            logger.error(f"Normalized job values (sanitized): {str(normalized_job)[:500]}")
             
             # Try to fix common issues
             try:
