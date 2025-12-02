@@ -294,7 +294,7 @@ async def get_job(job_id: str):
         logger.info(f"Fetching job {job_id}")
         
         try:
-    storage_instance = get_storage()
+            storage_instance = get_storage()
         except Exception as storage_init_error:
             logger.error(f"Failed to initialize storage: {storage_init_error}", exc_info=True)
             raise HTTPException(
@@ -303,7 +303,7 @@ async def get_job(job_id: str):
             )
         
         try:
-    job = await storage_instance.get_job(job_id)
+            job = await storage_instance.get_job(job_id)
         except Exception as storage_error:
             import traceback
             error_traceback = traceback.format_exc()
