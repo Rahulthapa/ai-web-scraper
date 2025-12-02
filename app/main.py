@@ -53,7 +53,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={
             "detail": exc.errors()
         }
-    )
+)
 
 # Initialize storage and worker (lazy initialization to handle missing credentials gracefully)
 storage = None
@@ -98,11 +98,14 @@ if os.path.exists(dist_path):
         index_path = os.path.join(dist_path, "index.html")
         if os.path.exists(index_path):
             return FileResponse(index_path)
-        return {
+        return JSONResponse(
+            status_code=200,
+            content={
             "message": "AI Web Scraper API",
             "version": "1.0.0",
             "status": "running"
         }
+        )
 else:
     @app.get("/")
     @app.head("/")
@@ -110,9 +113,9 @@ else:
         return JSONResponse(
             status_code=200,
             content={
-                "message": "AI Web Scraper API",
-                "version": "1.0.0",
-                "status": "running",
+            "message": "AI Web Scraper API",
+            "version": "1.0.0",
+            "status": "running",
                 "frontend": "not_built",
                 "instructions": {
                     "step1": "Install Node.js from https://nodejs.org/ (version 18+)",
@@ -130,25 +133,16 @@ else:
 @app.get("/health")
 @app.head("/health")
 async def health_check():
-    """Health check endpoint - tests database connection"""
-    try:
-        # Test database connection
-        storage_instance = get_storage()
-        # Try a simple query
-        test_result = storage_instance.client.table('scrape_jobs').select('id').limit(1).execute()
-        return {
+    """Health check endpoint - quick response for Render deployment"""
+    # Return immediately without blocking on database
+    # Render just needs to know the server is running
+    return JSONResponse(
+        status_code=200,
+        content={
             "status": "ok",
-            "database": "connected",
             "timestamp": datetime.utcnow().isoformat()
         }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "status": "error",
-            "database": "disconnected",
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat()
-        }
+    )
 
 
 @app.get("/test/job/{job_id}")
@@ -202,19 +196,6 @@ async def test_get_job(job_id: str):
                 "traceback": error_traceback
             }
         )
-    try:
-        # Try to initialize storage to check if credentials are set
-        get_storage()
-        return {
-            "status": "healthy",
-            "database": "connected"
-        }
-    except Exception as e:
-        return {
-            "status": "degraded",
-            "database": "not_configured",
-            "message": "Supabase credentials not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables."
-        }
 
 
 @app.post("/jobs", response_model=ScrapeJob, status_code=201)
@@ -241,13 +222,13 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         # Add crawl-related fields only if crawl_mode is enabled
         # Note: These fields will cause an error if the database migration hasn't been run
         if job_request.crawl_mode:
-            job_data.update({
-                'crawl_mode': True,
-                'search_query': job_request.search_query,
-                'max_pages': job_request.max_pages or 10,
-                'max_depth': job_request.max_depth or 2,
-                'same_domain': job_request.same_domain if job_request.same_domain is not None else True,
-            })
+                job_data.update({
+                    'crawl_mode': True,
+                    'search_query': job_request.search_query,
+                    'max_pages': job_request.max_pages or 10,
+                    'max_depth': job_request.max_depth or 2,
+                    'same_domain': job_request.same_domain if job_request.same_domain is not None else True,
+                })
         
         # Add JavaScript rendering field
         # Note: This field will cause an error if the database migration hasn't been run
@@ -313,7 +294,7 @@ async def get_job(job_id: str):
         logger.info(f"Fetching job {job_id}")
         
         try:
-            storage_instance = get_storage()
+    storage_instance = get_storage()
         except Exception as storage_init_error:
             logger.error(f"Failed to initialize storage: {storage_init_error}", exc_info=True)
             raise HTTPException(
@@ -322,7 +303,7 @@ async def get_job(job_id: str):
             )
         
         try:
-            job = await storage_instance.get_job(job_id)
+    job = await storage_instance.get_job(job_id)
         except Exception as storage_error:
             import traceback
             error_traceback = traceback.format_exc()
@@ -332,11 +313,11 @@ async def get_job(job_id: str):
                 status_code=500,
                 detail=f"Database error: {str(storage_error)}"
             )
-        
-        if not job:
+    
+    if not job:
             logger.warning(f"Job {job_id} not found")
-            raise HTTPException(status_code=404, detail="Job not found")
-        
+        raise HTTPException(status_code=404, detail="Job not found")
+    
         logger.debug(f"Raw job data keys: {list(job.keys()) if isinstance(job, dict) else 'not a dict'}")
         logger.debug(f"Raw job data type: {type(job)}")
         
