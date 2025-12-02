@@ -313,11 +313,11 @@ async def get_job(job_id: str):
                 status_code=500,
                 detail=f"Database error: {str(storage_error)}"
             )
-    
-    if not job:
+        
+        if not job:
             logger.warning(f"Job {job_id} not found")
-        raise HTTPException(status_code=404, detail="Job not found")
-    
+            raise HTTPException(status_code=404, detail="Job not found")
+        
         logger.debug(f"Raw job data keys: {list(job.keys()) if isinstance(job, dict) else 'not a dict'}")
         logger.debug(f"Raw job data type: {type(job)}")
         
