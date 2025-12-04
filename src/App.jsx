@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import JobForm from './components/JobForm'
 import JobList from './components/JobList'
 import ResultsView from './components/ResultsView'
@@ -10,34 +10,25 @@ function App() {
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(false)
 
-  // In production, API is on the same origin, so use relative URLs
-  // In development, use the VITE_API_URL or default to localhost
   const API_BASE_URL = import.meta.env.VITE_API_URL || 
     (import.meta.env.PROD ? '' : 'http://localhost:8000')
-
-  const fetchJobs = async () => {
-    // In a real app, you'd fetch jobs from an endpoint
-    // For now, we'll manage jobs in local state
-  }
 
   const handleJobCreated = (newJob) => {
     setJobs([newJob, ...jobs])
     setSelectedJob(newJob)
-    // Poll for job status
+    setResults(null)
     pollJobStatus(newJob.id)
   }
 
   const pollJobStatus = async (jobId) => {
-    const maxAttempts = 120 // Poll for up to 10 minutes (5 second intervals)
+    const maxAttempts = 120
     let attempts = 0
 
     const poll = async () => {
       if (attempts >= maxAttempts) {
-        console.warn(`Polling timeout for job ${jobId} after ${maxAttempts} attempts`)
         setLoading(false)
-        // Update job to show it's taking too long
         setJobs(prev => prev.map(j => 
-          j.id === jobId ? { ...j, status: 'timeout', error: 'Job is taking longer than expected' } : j
+          j.id === jobId ? { ...j, status: 'timeout', error: 'Job timed out' } : j
         ))
         return
       }
@@ -45,36 +36,27 @@ function App() {
       try {
         const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`)
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          throw new Error(`HTTP ${response.status}`)
         }
         const job = await response.json()
 
-        console.log(`Job ${jobId} status: ${job.status} (attempt ${attempts + 1}/${maxAttempts})`)
-
-        // Update job in list
         setJobs(prev => prev.map(j => j.id === jobId ? job : j))
         setSelectedJob(job)
 
         if (job.status === 'completed') {
-          console.log(`Job ${jobId} completed, fetching results`)
-          // Fetch results
           await fetchResults(jobId)
         } else if (job.status === 'failed') {
-          console.error(`Job ${jobId} failed:`, job.error)
           setLoading(false)
         } else {
-          // Continue polling
           attempts++
-          setTimeout(poll, 5000)
+          setTimeout(poll, 3000)
         }
       } catch (error) {
-        console.error(`Error polling job status for ${jobId}:`, error)
         attempts++
-        if (attempts >= maxAttempts) {
-          setLoading(false)
-        } else {
-          // Retry after error
+        if (attempts < maxAttempts) {
           setTimeout(poll, 5000)
+        } else {
+          setLoading(false)
         }
       }
     }
@@ -88,10 +70,10 @@ function App() {
       if (response.ok) {
         const data = await response.json()
         setResults(data)
-        setLoading(false)
       }
     } catch (error) {
       console.error('Error fetching results:', error)
+    } finally {
       setLoading(false)
     }
   }
@@ -101,6 +83,7 @@ function App() {
     setResults(null)
 
     if (job.status === 'completed') {
+      setLoading(true)
       await fetchResults(job.id)
     } else if (job.status === 'pending' || job.status === 'running') {
       setLoading(true)
@@ -113,6 +96,9 @@ function App() {
 
     try {
       const response = await fetch(`${API_BASE_URL}/jobs/${selectedJob.id}/export?format=${format}`)
+      if (!response.ok) {
+        throw new Error('Export failed')
+      }
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -123,7 +109,7 @@ function App() {
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
     } catch (error) {
-      console.error('Error exporting:', error)
+      console.error('Export error:', error)
       alert('Failed to export results')
     }
   }
@@ -131,8 +117,16 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>🕷️ AI Web Scraper</h1>
-        <p>Intelligent web scraping with AI-powered filtering</p>
+        <div className="header-brand">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 2a10 10 0 0 1 10 10"/>
+            <path d="M12 2a10 10 0 0 0-10 10"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+          <h1>Web Scraper</h1>
+        </div>
+        <span className="header-tagline">AI-powered data extraction</span>
       </header>
 
       <div className="app-content">
@@ -142,7 +136,6 @@ function App() {
             apiUrl={API_BASE_URL}
             setLoading={setLoading}
           />
-          
           <JobList
             jobs={jobs}
             selectedJob={selectedJob}
@@ -151,13 +144,24 @@ function App() {
         </div>
 
         <div className="right-panel">
-          {selectedJob && (
+          {selectedJob ? (
             <ResultsView
               job={selectedJob}
               results={results}
               loading={loading}
               onExport={handleExport}
             />
+          ) : (
+            <div className="empty-state-container">
+              <div className="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/>
+                  <rect x="9" y="3" width="6" height="4" rx="1"/>
+                  <path d="M9 12h6M9 16h6"/>
+                </svg>
+                <p>Create a scraping job to get started</p>
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -166,4 +170,3 @@ function App() {
 }
 
 export default App
-

@@ -1,53 +1,94 @@
 .app {
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  overflow: hidden;
-  min-height: calc(100vh - 40px);
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
 .app-header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 30px;
-  text-align: center;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 20px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.app-header h1 {
-  font-size: 2.5rem;
-  margin-bottom: 10px;
-  font-weight: 700;
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.app-header p {
-  font-size: 1.1rem;
-  opacity: 0.9;
+.header-brand svg {
+  width: 32px;
+  height: 32px;
+  color: var(--accent);
+}
+
+.header-brand h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.header-tagline {
+  color: var(--text-muted);
+  font-size: 0.875rem;
 }
 
 .app-content {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  padding: 20px;
+  grid-template-columns: 400px 1fr;
   flex: 1;
+  overflow: hidden;
 }
 
 .left-panel {
+  background: var(--card-bg);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  overflow: hidden;
 }
 
 .right-panel {
-  display: flex;
-  flex-direction: column;
+  background: var(--primary);
+  overflow: auto;
+  padding: 24px;
 }
 
-@media (max-width: 968px) {
+.empty-state-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+}
+
+.empty-state {
+  text-align: center;
+  max-width: 300px;
+}
+
+.empty-state svg {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.empty-state p {
+  font-size: 0.9375rem;
+}
+
+@media (max-width: 900px) {
   .app-content {
     grid-template-columns: 1fr;
   }
+  
+  .left-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 50vh;
+  }
 }
-

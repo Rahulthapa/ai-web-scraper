@@ -193,6 +193,37 @@ async def debug_info():
     return JSONResponse(status_code=200, content=debug_info)
 
 
+@app.get("/debug/jobs")
+async def debug_recent_jobs():
+    """Show recent jobs with their status and errors for debugging"""
+    try:
+        storage_instance = get_storage()
+        
+        # Get last 10 jobs
+        response = storage_instance.client.table('scrape_jobs').select(
+            'id, url, status, error, created_at, crawl_mode, search_query, use_javascript'
+        ).order('created_at', desc=True).limit(10).execute()
+        
+        jobs = []
+        for job in (response.data or []):
+            jobs.append({
+                "id": job.get('id'),
+                "url": job.get('url') or job.get('search_query'),
+                "status": job.get('status'),
+                "error": job.get('error'),
+                "crawl_mode": job.get('crawl_mode'),
+                "use_javascript": job.get('use_javascript'),
+                "created_at": job.get('created_at')
+            })
+        
+        return JSONResponse(status_code=200, content={
+            "total_jobs": len(jobs),
+            "jobs": jobs
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/test/job/{job_id}")
 async def test_get_job(job_id: str):
     """Test endpoint to diagnose job fetching issues - returns raw data"""

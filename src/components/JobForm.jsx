@@ -23,9 +23,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
     try {
       const response = await fetch(`${apiUrl}/jobs`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: crawlMode ? null : url,
           search_query: crawlMode ? searchQuery : null,
@@ -40,43 +38,23 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
       })
 
       if (!response.ok) {
-        // Try to parse as JSON, but handle cases where response might be HTML or plain text
-        let errorMessage = `Failed to create job (${response.status})`
+        let errorMessage = `Request failed (${response.status})`
         try {
           const contentType = response.headers.get('content-type')
           if (contentType && contentType.includes('application/json')) {
             const errorData = await response.json()
-            errorMessage = errorData.detail || errorData.message || errorMessage
-          } else {
-            // Response is not JSON, read as text
-            const text = await response.text()
-            errorMessage = text || errorMessage
+            errorMessage = errorData.detail || errorMessage
           }
-        } catch (parseError) {
-          // If parsing fails, try to get text
-          try {
-            const text = await response.text()
-            errorMessage = text || errorMessage
-          } catch {
-            // If all else fails, use status-based message
-            errorMessage = `Server error: ${response.status} ${response.statusText}`
-          }
-        }
+        } catch {}
         throw new Error(errorMessage)
       }
 
       const job = await response.json()
       onJobCreated(job)
 
-      // Reset form
       setUrl('')
       setSearchQuery('')
       setAiPrompt('')
-      setExportFormat('json')
-      setUseJavascript(false)
-      setMaxPages(10)
-      setMaxDepth(2)
-      setSameDomain(true)
     } catch (err) {
       setError(err.message)
       setLoading(false)
@@ -86,29 +64,26 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
   }
 
   return (
-    <div className="job-form-card">
-      <h2>Create Scraping Job</h2>
+    <div className="job-form">
+      <h2>New Scraping Job</h2>
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="crawlMode" className="checkbox-label">
+          <label className="checkbox-group">
             <input
               type="checkbox"
-              id="crawlMode"
               checked={crawlMode}
               onChange={(e) => setCrawlMode(e.target.checked)}
               disabled={submitting}
             />
-            <span>🌐 Web Crawl Mode (Discover & scrape multiple pages)</span>
+            <span>Crawl Mode (multiple pages)</span>
           </label>
-          <small>Enable to crawl the web automatically instead of scraping a single page</small>
         </div>
 
         {!crawlMode ? (
           <div className="form-group">
-            <label htmlFor="url">Website URL *</label>
+            <label>URL</label>
             <input
               type="url"
-              id="url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.com"
@@ -119,108 +94,112 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
         ) : (
           <>
             <div className="form-group">
-              <label htmlFor="searchQuery">Search Query or Starting URL *</label>
+              <label>Search Query or URL</label>
               <input
                 type="text"
-                id="searchQuery"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="e.g., 'artificial intelligence' or 'https://example.com'"
+                placeholder="steakhouses in Houston, TX"
                 required
                 disabled={submitting}
               />
-              <small>Enter a search query to find pages, or a starting URL to crawl from</small>
+              <small>Enter a search term or starting URL</small>
             </div>
 
-            <div className="form-group-row">
+            <div className="form-row">
               <div className="form-group">
-                <label htmlFor="maxPages">Max Pages</label>
+                <label>Max Pages</label>
                 <input
                   type="number"
-                  id="maxPages"
                   value={maxPages}
                   onChange={(e) => setMaxPages(parseInt(e.target.value) || 10)}
                   min="1"
-                  max="100"
+                  max="50"
                   disabled={submitting}
                 />
               </div>
-
               <div className="form-group">
-                <label htmlFor="maxDepth">Max Depth</label>
+                <label>Max Depth</label>
                 <input
                   type="number"
-                  id="maxDepth"
                   value={maxDepth}
                   onChange={(e) => setMaxDepth(parseInt(e.target.value) || 2)}
                   min="1"
                   max="5"
                   disabled={submitting}
                 />
-                <small>How many link levels to follow</small>
               </div>
             </div>
 
             <div className="form-group">
-              <label htmlFor="sameDomain" className="checkbox-label">
+              <label className="checkbox-group">
                 <input
                   type="checkbox"
-                  id="sameDomain"
                   checked={sameDomain}
                   onChange={(e) => setSameDomain(e.target.checked)}
                   disabled={submitting}
                 />
-                <span>Only crawl same domain</span>
+                <span>Same domain only</span>
               </label>
             </div>
           </>
         )}
 
         <div className="form-group">
-          <label htmlFor="aiPrompt">AI Prompt (Optional)</label>
+          <label>AI Extraction Prompt (optional)</label>
           <textarea
-            id="aiPrompt"
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
-            placeholder="e.g., Extract all product names and prices"
-            rows="3"
+            placeholder="Extract product names and prices..."
             disabled={submitting}
           />
-          <small>Use AI to filter and structure the scraped data</small>
+          <small>Describe what data you want to extract</small>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="exportFormat">Export Format</label>
-          <select
-            id="exportFormat"
-            value={exportFormat}
-            onChange={(e) => setExportFormat(e.target.value)}
-            disabled={submitting}
-          >
-            <option value="json">JSON</option>
-            <option value="csv">CSV</option>
-            <option value="excel">Excel</option>
-          </select>
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="useJavascript" className="checkbox-label">
-            <input
-              type="checkbox"
-              id="useJavascript"
-              checked={useJavascript}
-              onChange={(e) => setUseJavascript(e.target.checked)}
+        <div className="form-row">
+          <div className="form-group">
+            <label>Export Format</label>
+            <select
+              value={exportFormat}
+              onChange={(e) => setExportFormat(e.target.value)}
               disabled={submitting}
-            />
-            <span>Use JavaScript Rendering (Playwright)</span>
-          </label>
-          <small>Enable for websites that require JavaScript to load content (React, Vue, Angular apps)</small>
+            >
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+              <option value="excel">Excel</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>&nbsp;</label>
+            <label className="checkbox-group" style={{ height: '42px', display: 'flex' }}>
+              <input
+                type="checkbox"
+                checked={useJavascript}
+                onChange={(e) => setUseJavascript(e.target.checked)}
+                disabled={submitting}
+              />
+              <span>JavaScript rendering</span>
+            </label>
+          </div>
         </div>
 
-        {error && <div className="error-message">{error}</div>}
+        {error && <div className="form-error">{error}</div>}
 
-        <button type="submit" disabled={submitting || (!crawlMode && !url) || (crawlMode && !searchQuery)}>
-          {submitting ? 'Creating...' : crawlMode ? 'Start Crawling' : 'Start Scraping'}
+        <button 
+          type="submit" 
+          className="submit-btn"
+          disabled={submitting || (!crawlMode && !url) || (crawlMode && !searchQuery)}
+        >
+          {submitting ? (
+            <span className="spinner" />
+          ) : (
+            <>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/>
+              </svg>
+              {crawlMode ? 'Start Crawling' : 'Start Scraping'}
+            </>
+          )}
         </button>
       </form>
     </div>
@@ -228,4 +207,3 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
 }
 
 export default JobForm
-
