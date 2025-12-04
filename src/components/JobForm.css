@@ -12,6 +12,44 @@
   margin-bottom: 16px;
 }
 
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--input-bg);
+  padding: 4px;
+  border-radius: 6px;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-tab:hover {
+  color: var(--text);
+}
+
+.mode-tab.active {
+  background: var(--accent);
+  color: white;
+}
+
+.html-input {
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.75rem;
+  min-height: 150px;
+  line-height: 1.5;
+}
+
 .form-group {
   margin-bottom: 16px;
 }

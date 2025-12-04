@@ -10,7 +10,7 @@ import os
 import logging
 from datetime import datetime
 
-from .models import ScrapeJobCreate, ScrapeJob, ScrapeResult, JobStatus
+from .models import ScrapeJobCreate, ScrapeJob, ScrapeResult, JobStatus, ParseHTMLRequest
 from .storage import Storage
 from .worker import ScraperWorker
 from .exporter import DataExporter
@@ -222,6 +222,69 @@ async def debug_recent_jobs():
         })
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/parse-html")
+async def parse_html(request: ParseHTMLRequest):
+    """
+    Parse raw HTML content directly - bypasses anti-bot protection.
+    
+    How to use:
+    1. Open the target page in your browser
+    2. Right-click -> View Page Source (or Ctrl+U)
+    3. Copy all the HTML
+    4. Paste it here
+    """
+    try:
+        from bs4 import BeautifulSoup
+        from .scraper import WebScraper
+        from .ai_filter import AIFilter
+        
+        if not request.html or len(request.html.strip()) < 100:
+            raise HTTPException(status_code=400, detail="HTML content is too short or empty")
+        
+        logger.info(f"Parsing HTML content ({len(request.html)} chars)")
+        
+        # Parse with BeautifulSoup
+        soup = BeautifulSoup(request.html, 'html.parser')
+        
+        # Remove script and style elements
+        for element in soup(['script', 'style', 'noscript']):
+            element.decompose()
+        
+        # Extract data using the scraper's method
+        scraper = WebScraper()
+        source_url = request.source_url or "pasted-html"
+        data = await scraper._extract_structured_data(soup, source_url, request.html)
+        data['source'] = 'pasted_html'
+        data['html_length'] = len(request.html)
+        
+        # Apply AI filtering if prompt provided
+        if request.ai_prompt:
+            logger.info(f"Applying AI filter with prompt: {request.ai_prompt[:50]}...")
+            ai_filter = AIFilter()
+            filtered_results = await ai_filter.filter_and_structure(data, request.ai_prompt)
+            
+            return JSONResponse(status_code=200, content={
+                "success": True,
+                "ai_filtered": True,
+                "prompt": request.ai_prompt,
+                "results": filtered_results,
+                "total_items": len(filtered_results)
+            })
+        
+        # Return raw parsed data
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "ai_filtered": False,
+            "data": data
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"HTML parsing failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to parse HTML: {str(e)}")
 
 
 @app.get("/test/job/{job_id}")

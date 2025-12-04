@@ -24,6 +24,12 @@ class ScrapeJobCreate(BaseModel):
     use_javascript: Optional[bool] = False  # Use Playwright for JS-rendered pages
 
 
+class ParseHTMLRequest(BaseModel):
+    html: str  # Raw HTML content
+    source_url: Optional[str] = None  # Optional: where the HTML came from
+    ai_prompt: Optional[str] = None  # Optional: AI extraction prompt
+
+
 class ScrapeJob(BaseModel):
     id: str
     url: Optional[str] = None  # Optional for crawl mode

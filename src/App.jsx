@@ -13,11 +13,18 @@ function App() {
   const API_BASE_URL = import.meta.env.VITE_API_URL || 
     (import.meta.env.PROD ? '' : 'http://localhost:8000')
 
-  const handleJobCreated = (newJob) => {
+  const handleJobCreated = (newJob, directResults = null) => {
     setJobs([newJob, ...jobs])
     setSelectedJob(newJob)
-    setResults(null)
-    pollJobStatus(newJob.id)
+    
+    if (directResults) {
+      // HTML parsing returns results directly
+      setResults(directResults)
+      setLoading(false)
+    } else {
+      setResults(null)
+      pollJobStatus(newJob.id)
+    }
   }
 
   const pollJobStatus = async (jobId) => {

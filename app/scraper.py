@@ -51,25 +51,199 @@ class WebScraper:
             raise Exception(f"Scraping failed: {str(e)}")
 
     async def _scrape_static(self, url: str) -> Dict[str, Any]:
-        """Scrape static HTML content"""
-        # Use async httpx for proper async support
+        """Scrape static HTML content - extracts data from raw HTML including embedded JSON"""
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url, headers=self.session.headers)
             response.raise_for_status()
             
-            # Detect content type
-            content_type = response.headers.get('Content-Type', '').lower()
-            
+            html_content = response.text
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Remove script and style elements
+            # FIRST: Extract embedded JSON data BEFORE removing scripts
+            embedded_data = self._extract_embedded_json(soup, url)
+            
+            # Remove script and style elements for text extraction
             for script in soup(["script", "style", "noscript"]):
                 script.decompose()
             
-            # Extract comprehensive data
-            data = await self._extract_structured_data(soup, url, response.text)
+            # Extract structured data from HTML
+            data = await self._extract_structured_data(soup, url, html_content)
+            
+            # Merge embedded JSON data
+            if embedded_data:
+                data['embedded_data'] = embedded_data
+                # If we found restaurants/businesses, add them prominently
+                if 'restaurants' in embedded_data:
+                    data['restaurants'] = embedded_data['restaurants']
+                if 'businesses' in embedded_data:
+                    data['businesses'] = embedded_data['businesses']
+                if 'items' in embedded_data:
+                    data['items'] = embedded_data['items']
             
             return data
+    
+    def _extract_embedded_json(self, soup: BeautifulSoup, url: str) -> Dict[str, Any]:
+        """Extract JSON data embedded in script tags - many sites include data this way"""
+        embedded = {}
+        
+        # 1. JSON-LD structured data (schema.org)
+        json_ld_data = []
+        for script in soup.find_all('script', type='application/ld+json'):
+            try:
+                data = json.loads(script.string)
+                json_ld_data.append(data)
+                
+                # Extract restaurants/businesses from JSON-LD
+                if isinstance(data, dict):
+                    if data.get('@type') in ['Restaurant', 'LocalBusiness', 'FoodEstablishment']:
+                        if 'restaurants' not in embedded:
+                            embedded['restaurants'] = []
+                        embedded['restaurants'].append(self._parse_jsonld_business(data))
+                    elif data.get('@type') == 'ItemList':
+                        items = data.get('itemListElement', [])
+                        for item in items:
+                            if isinstance(item, dict) and item.get('item'):
+                                biz = item.get('item', {})
+                                if biz.get('@type') in ['Restaurant', 'LocalBusiness', 'FoodEstablishment']:
+                                    if 'restaurants' not in embedded:
+                                        embedded['restaurants'] = []
+                                    embedded['restaurants'].append(self._parse_jsonld_business(biz))
+                elif isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and item.get('@type') in ['Restaurant', 'LocalBusiness']:
+                            if 'restaurants' not in embedded:
+                                embedded['restaurants'] = []
+                            embedded['restaurants'].append(self._parse_jsonld_business(item))
+            except (json.JSONDecodeError, AttributeError):
+                continue
+        
+        if json_ld_data:
+            embedded['json_ld'] = json_ld_data
+        
+        # 2. Next.js data (__NEXT_DATA__)
+        next_data_script = soup.find('script', id='__NEXT_DATA__')
+        if next_data_script:
+            try:
+                next_data = json.loads(next_data_script.string)
+                embedded['next_data'] = next_data
+                # Try to find business data in Next.js payload
+                self._extract_from_nested(next_data, embedded)
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        
+        # 3. Yelp-specific data patterns
+        if 'yelp.com' in url.lower():
+            embedded.update(self._extract_yelp_data(soup))
+        
+        # 4. Generic JSON in script tags
+        for script in soup.find_all('script'):
+            if script.string and len(script.string) > 100:
+                # Look for JSON objects/arrays in script content
+                text = script.string.strip()
+                
+                # Try to find JSON data patterns
+                patterns = [
+                    r'window\.__PRELOADED_STATE__\s*=\s*({.+?});',
+                    r'window\.pageData\s*=\s*({.+?});',
+                    r'var\s+data\s*=\s*({.+?});',
+                    r'"results"\s*:\s*(\[.+?\])',
+                    r'"businesses"\s*:\s*(\[.+?\])',
+                    r'"restaurants"\s*:\s*(\[.+?\])',
+                ]
+                
+                for pattern in patterns:
+                    match = re.search(pattern, text, re.DOTALL)
+                    if match:
+                        try:
+                            data = json.loads(match.group(1))
+                            if isinstance(data, list) and len(data) > 0:
+                                embedded['extracted_list'] = data[:50]  # Limit
+                            elif isinstance(data, dict):
+                                embedded['extracted_data'] = data
+                        except json.JSONDecodeError:
+                            continue
+        
+        return embedded
+    
+    def _parse_jsonld_business(self, data: Dict) -> Dict[str, Any]:
+        """Parse a JSON-LD business/restaurant entry"""
+        address = data.get('address', {})
+        if isinstance(address, str):
+            address_str = address
+        else:
+            address_str = ', '.join(filter(None, [
+                address.get('streetAddress'),
+                address.get('addressLocality'),
+                address.get('addressRegion'),
+                address.get('postalCode')
+            ]))
+        
+        rating = data.get('aggregateRating', {})
+        
+        return {
+            'name': data.get('name'),
+            'address': address_str,
+            'phone': data.get('telephone'),
+            'cuisine': data.get('servesCuisine'),
+            'price_range': data.get('priceRange'),
+            'rating': rating.get('ratingValue') if isinstance(rating, dict) else None,
+            'review_count': rating.get('reviewCount') if isinstance(rating, dict) else None,
+            'url': data.get('url'),
+            'image': data.get('image'),
+        }
+    
+    def _extract_from_nested(self, data: Any, result: Dict, depth: int = 0) -> None:
+        """Recursively extract business data from nested structures"""
+        if depth > 5:  # Limit recursion
+            return
+        
+        if isinstance(data, dict):
+            # Check if this looks like a business/restaurant
+            if 'name' in data and ('address' in data or 'location' in data or 'rating' in data):
+                if 'businesses' not in result:
+                    result['businesses'] = []
+                if len(result['businesses']) < 50:  # Limit
+                    result['businesses'].append(data)
+            
+            # Recurse into values
+            for key, value in data.items():
+                if key in ['businesses', 'restaurants', 'results', 'items', 'listings']:
+                    if isinstance(value, list):
+                        result[key] = value[:50]  # Limit
+                else:
+                    self._extract_from_nested(value, result, depth + 1)
+        
+        elif isinstance(data, list):
+            for item in data[:20]:  # Limit iteration
+                self._extract_from_nested(item, result, depth + 1)
+    
+    def _extract_yelp_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Extract Yelp-specific data patterns"""
+        yelp_data = {}
+        
+        # Look for Yelp's data hydration scripts
+        for script in soup.find_all('script'):
+            if script.string:
+                text = script.string
+                
+                # Yelp often uses patterns like this
+                patterns = [
+                    r'\"searchPageProps\":\s*({.+?})\s*,\s*\"',
+                    r'\"bizDetailsPageProps\":\s*({.+?})\s*,\s*\"',
+                    r'\"legacyProps\":\s*({.+?})\s*\}',
+                ]
+                
+                for pattern in patterns:
+                    match = re.search(pattern, text, re.DOTALL)
+                    if match:
+                        try:
+                            data = json.loads(match.group(1))
+                            yelp_data['yelp_props'] = data
+                            break
+                        except json.JSONDecodeError:
+                            continue
+        
+        return yelp_data
 
     async def _scrape_with_playwright(self, url: str) -> Dict[str, Any]:
         """Scrape JavaScript-rendered content using Playwright with anti-detection"""

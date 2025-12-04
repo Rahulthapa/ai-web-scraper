@@ -2,9 +2,10 @@ import React, { useState } from 'react'
 import './JobForm.css'
 
 function JobForm({ onJobCreated, apiUrl, setLoading }) {
-  const [crawlMode, setCrawlMode] = useState(false)
+  const [mode, setMode] = useState('url') // 'url', 'crawl', 'html'
   const [url, setUrl] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [rawHtml, setRawHtml] = useState('')
   const [aiPrompt, setAiPrompt] = useState('')
   const [exportFormat, setExportFormat] = useState('json')
   const [useJavascript, setUseJavascript] = useState(false)
@@ -13,24 +14,70 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
   const [sameDomain, setSameDomain] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [htmlResults, setHtmlResults] = useState(null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     setSubmitting(true)
     setLoading(true)
+    setHtmlResults(null)
 
     try {
+      if (mode === 'html') {
+        // Parse HTML directly
+        const response = await fetch(`${apiUrl}/parse-html`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            html: rawHtml,
+            source_url: 'pasted-html',
+            ai_prompt: aiPrompt || null,
+          }),
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}))
+          throw new Error(errorData.detail || `Request failed (${response.status})`)
+        }
+
+        const result = await response.json()
+        
+        // Create a fake job for display
+        const fakeJob = {
+          id: `html-${Date.now()}`,
+          url: 'Pasted HTML',
+          status: 'completed',
+          created_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          ai_prompt: aiPrompt,
+        }
+        
+        // Pass to parent with results
+        onJobCreated(fakeJob, {
+          job_id: fakeJob.id,
+          data: result.results || [result.data],
+          total_items: result.total_items || 1,
+          filtered_items: result.total_items || 1,
+        })
+        
+        setRawHtml('')
+        setAiPrompt('')
+        setLoading(false)
+        return
+      }
+
+      // Regular URL or Crawl mode
       const response = await fetch(`${apiUrl}/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          url: crawlMode ? null : url,
-          search_query: crawlMode ? searchQuery : null,
-          crawl_mode: crawlMode,
-          max_pages: crawlMode ? maxPages : null,
-          max_depth: crawlMode ? maxDepth : null,
-          same_domain: crawlMode ? sameDomain : null,
+          url: mode === 'url' ? url : null,
+          search_query: mode === 'crawl' ? searchQuery : null,
+          crawl_mode: mode === 'crawl',
+          max_pages: mode === 'crawl' ? maxPages : null,
+          max_depth: mode === 'crawl' ? maxDepth : null,
+          same_domain: mode === 'crawl' ? sameDomain : null,
           ai_prompt: aiPrompt || null,
           export_format: exportFormat,
           use_javascript: useJavascript,
@@ -63,25 +110,46 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
     }
   }
 
+  const canSubmit = () => {
+    if (submitting) return false
+    if (mode === 'url') return !!url
+    if (mode === 'crawl') return !!searchQuery
+    if (mode === 'html') return rawHtml.length > 100
+    return false
+  }
+
   return (
     <div className="job-form">
       <h2>New Scraping Job</h2>
-      <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label className="checkbox-group">
-            <input
-              type="checkbox"
-              checked={crawlMode}
-              onChange={(e) => setCrawlMode(e.target.checked)}
-              disabled={submitting}
-            />
-            <span>Crawl Mode (multiple pages)</span>
-          </label>
-        </div>
+      
+      <div className="mode-tabs">
+        <button 
+          type="button"
+          className={`mode-tab ${mode === 'url' ? 'active' : ''}`}
+          onClick={() => setMode('url')}
+        >
+          URL
+        </button>
+        <button 
+          type="button"
+          className={`mode-tab ${mode === 'crawl' ? 'active' : ''}`}
+          onClick={() => setMode('crawl')}
+        >
+          Crawl
+        </button>
+        <button 
+          type="button"
+          className={`mode-tab ${mode === 'html' ? 'active' : ''}`}
+          onClick={() => setMode('html')}
+        >
+          Paste HTML
+        </button>
+      </div>
 
-        {!crawlMode ? (
+      <form onSubmit={handleSubmit}>
+        {mode === 'url' && (
           <div className="form-group">
-            <label>URL</label>
+            <label>Website URL</label>
             <input
               type="url"
               value={url}
@@ -91,7 +159,9 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
               disabled={submitting}
             />
           </div>
-        ) : (
+        )}
+
+        {mode === 'crawl' && (
           <>
             <div className="form-group">
               <label>Search Query or URL</label>
@@ -145,59 +215,84 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
           </>
         )}
 
+        {mode === 'html' && (
+          <div className="form-group">
+            <label>Paste HTML Content</label>
+            <textarea
+              value={rawHtml}
+              onChange={(e) => setRawHtml(e.target.value)}
+              placeholder="Open the page in your browser, right-click -> View Page Source, copy all the HTML and paste here..."
+              disabled={submitting}
+              className="html-input"
+              rows={8}
+            />
+            <small>
+              {rawHtml.length > 0 
+                ? `${rawHtml.length.toLocaleString()} characters` 
+                : 'Paste the complete HTML source code'}
+            </small>
+          </div>
+        )}
+
         <div className="form-group">
           <label>AI Extraction Prompt (optional)</label>
           <textarea
             value={aiPrompt}
             onChange={(e) => setAiPrompt(e.target.value)}
-            placeholder="Extract product names and prices..."
+            placeholder="Extract restaurant names, addresses, ratings, and phone numbers..."
             disabled={submitting}
           />
           <small>Describe what data you want to extract</small>
         </div>
 
-        <div className="form-row">
-          <div className="form-group">
-            <label>Export Format</label>
-            <select
-              value={exportFormat}
-              onChange={(e) => setExportFormat(e.target.value)}
-              disabled={submitting}
-            >
-              <option value="json">JSON</option>
-              <option value="csv">CSV</option>
-              <option value="excel">Excel</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label>&nbsp;</label>
-            <label className="checkbox-group" style={{ height: '42px', display: 'flex' }}>
-              <input
-                type="checkbox"
-                checked={useJavascript}
-                onChange={(e) => setUseJavascript(e.target.checked)}
+        {mode !== 'html' && (
+          <div className="form-row">
+            <div className="form-group">
+              <label>Export Format</label>
+              <select
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value)}
                 disabled={submitting}
-              />
-              <span>JavaScript rendering</span>
-            </label>
+              >
+                <option value="json">JSON</option>
+                <option value="csv">CSV</option>
+                <option value="excel">Excel</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>&nbsp;</label>
+              <label className="checkbox-group" style={{ height: '42px', display: 'flex' }}>
+                <input
+                  type="checkbox"
+                  checked={useJavascript}
+                  onChange={(e) => setUseJavascript(e.target.checked)}
+                  disabled={submitting}
+                />
+                <span>JavaScript rendering</span>
+              </label>
+            </div>
           </div>
-        </div>
+        )}
 
         {error && <div className="form-error">{error}</div>}
 
         <button 
           type="submit" 
           className="submit-btn"
-          disabled={submitting || (!crawlMode && !url) || (crawlMode && !searchQuery)}
+          disabled={!canSubmit()}
         >
           {submitting ? (
             <span className="spinner" />
           ) : (
             <>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/>
+                {mode === 'html' ? (
+                  <path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>
+                ) : (
+                  <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/>
+                )}
               </svg>
-              {crawlMode ? 'Start Crawling' : 'Start Scraping'}
+              {mode === 'html' ? 'Parse HTML' : mode === 'crawl' ? 'Start Crawling' : 'Start Scraping'}
             </>
           )}
         </button>
