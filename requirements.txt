@@ -9,3 +9,7 @@ openpyxl==3.1.2
 playwright==1.41.0
 supabase==2.8.0
 python-dotenv==1.0.0
+python-dateutil==2.8.2
+# AI Providers (optional - enable the one you want to use)
+google-generativeai==0.8.3
+openai==1.55.0

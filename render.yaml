@@ -2,12 +2,30 @@ services:
   - type: web
     name: ai-web-scraper
     env: python
-    buildCommand: pip install -r requirements.txt
+    plan: free
+    buildCommand: |
+      # Install Node.js for frontend build
+      curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+      apt-get install -y nodejs
+      # Build frontend
+      npm install
+      npm run build
+      # Install Python dependencies
+      pip install -r requirements.txt
+      # Install Playwright browser (optional, for JS rendering)
+      playwright install chromium --with-deps || true
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
+      # Required: Supabase Database
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-
+      # Optional: AI Providers (choose one)
+      # Google Gemini - FREE tier (recommended)
+      - key: GEMINI_API_KEY
+        sync: false
+      # OpenAI - Paid (optional alternative)
+      - key: OPENAI_API_KEY
+        sync: false
