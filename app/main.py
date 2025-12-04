@@ -145,6 +145,54 @@ async def health_check():
     )
 
 
+@app.get("/debug")
+async def debug_info():
+    """Debug endpoint to check configuration and database connection"""
+    import os
+    
+    debug_info = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "environment": {
+            "SUPABASE_URL": "SET" if os.getenv("SUPABASE_URL") else "NOT SET",
+            "SUPABASE_ANON_KEY": "SET" if os.getenv("SUPABASE_ANON_KEY") else "NOT SET",
+            "GEMINI_API_KEY": "SET" if os.getenv("GEMINI_API_KEY") else "NOT SET",
+            "OPENAI_API_KEY": "SET" if os.getenv("OPENAI_API_KEY") else "NOT SET",
+        },
+        "database": {"status": "unknown"},
+        "ai_provider": "unknown"
+    }
+    
+    # Check database connection
+    try:
+        storage_instance = get_storage()
+        # Try a simple query to verify connection
+        response = storage_instance.client.table('scrape_jobs').select('id').limit(1).execute()
+        debug_info["database"] = {
+            "status": "connected",
+            "table_accessible": True
+        }
+    except HTTPException as e:
+        debug_info["database"] = {
+            "status": "error",
+            "error": e.detail
+        }
+    except Exception as e:
+        debug_info["database"] = {
+            "status": "error",
+            "error": str(e)
+        }
+    
+    # Check AI provider
+    try:
+        from .ai_filter import AIFilter
+        ai = AIFilter()
+        debug_info["ai_provider"] = ai.provider
+    except Exception as e:
+        debug_info["ai_provider"] = f"error: {str(e)}"
+    
+    return JSONResponse(status_code=200, content=debug_info)
+
+
 @app.get("/test/job/{job_id}")
 async def test_get_job(job_id: str):
     """Test endpoint to diagnose job fetching issues - returns raw data"""
