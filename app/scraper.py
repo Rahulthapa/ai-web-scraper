@@ -3,8 +3,11 @@ from bs4 import BeautifulSoup
 from typing import Dict, Any, List, Optional
 import httpx
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, quote_plus
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class WebScraper:
@@ -324,6 +327,108 @@ class WebScraper:
             except (json.JSONDecodeError, AttributeError):
                 continue
         return structured_data
+
+    async def scrape_opentable(self, location: str, cuisine: str = None, max_results: int = 20) -> Dict[str, Any]:
+        """
+        Specialized scraper for OpenTable restaurant data.
+        Uses their search page and extracts structured restaurant information.
+        """
+        logger.info(f"Scraping OpenTable for: {location}, cuisine: {cuisine}")
+        
+        # Build OpenTable search URL
+        search_term = cuisine if cuisine else "restaurants"
+        encoded_location = quote_plus(location)
+        encoded_term = quote_plus(search_term)
+        
+        url = f"https://www.opentable.com/s?dateTime=2024-12-15T19:00&covers=2&term={encoded_term}&queryUnderstandingType=location&locationString={encoded_location}"
+        
+        try:
+            # OpenTable requires JavaScript rendering
+            page_data = await self._scrape_with_playwright(url)
+            
+            # Try to extract restaurant-specific data
+            restaurants = self._parse_opentable_data(page_data)
+            
+            if restaurants:
+                return {
+                    'url': url,
+                    'source': 'opentable',
+                    'location': location,
+                    'cuisine': cuisine,
+                    'total_found': len(restaurants),
+                    'restaurants': restaurants[:max_results],
+                    'page_type': 'restaurant_listing'
+                }
+            else:
+                # Return raw data if parsing failed
+                return page_data
+                
+        except Exception as e:
+            logger.error(f"OpenTable scraping failed: {e}")
+            raise Exception(f"OpenTable scraping failed: {str(e)}")
+    
+    def _parse_opentable_data(self, page_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parse OpenTable search results to extract restaurant data"""
+        restaurants = []
+        
+        # Try to extract from JSON-LD structured data first
+        structured_data = page_data.get('structured_data', [])
+        for data in structured_data:
+            if isinstance(data, dict):
+                if data.get('@type') == 'Restaurant' or 'Restaurant' in str(data.get('@type', '')):
+                    restaurants.append({
+                        'name': data.get('name'),
+                        'cuisine': data.get('servesCuisine'),
+                        'price_range': data.get('priceRange'),
+                        'rating': data.get('aggregateRating', {}).get('ratingValue') if isinstance(data.get('aggregateRating'), dict) else None,
+                        'review_count': data.get('aggregateRating', {}).get('reviewCount') if isinstance(data.get('aggregateRating'), dict) else None,
+                        'address': self._format_address(data.get('address', {})),
+                        'phone': data.get('telephone'),
+                        'url': data.get('url'),
+                    })
+                elif data.get('@type') == 'ItemList':
+                    # Handle ItemList of restaurants
+                    for item in data.get('itemListElement', []):
+                        if isinstance(item, dict) and item.get('item'):
+                            rest = item.get('item', {})
+                            restaurants.append({
+                                'name': rest.get('name'),
+                                'cuisine': rest.get('servesCuisine'),
+                                'price_range': rest.get('priceRange'),
+                                'address': self._format_address(rest.get('address', {})),
+                                'url': rest.get('url'),
+                            })
+        
+        # Also try to extract from text content using patterns
+        if not restaurants:
+            text_content = page_data.get('text_content', '')
+            main_content = page_data.get('main_content', '')
+            
+            # Try to find restaurant names from headings
+            headings = page_data.get('headings', {})
+            for level in ['h2', 'h3']:
+                for heading in headings.get(level, []):
+                    if heading and len(heading) > 3 and len(heading) < 100:
+                        restaurants.append({'name': heading})
+        
+        return restaurants
+    
+    def _format_address(self, address_data: Any) -> str:
+        """Format address from structured data"""
+        if isinstance(address_data, str):
+            return address_data
+        if isinstance(address_data, dict):
+            parts = []
+            if address_data.get('streetAddress'):
+                parts.append(address_data['streetAddress'])
+            if address_data.get('addressLocality'):
+                parts.append(address_data['addressLocality'])
+            if address_data.get('addressRegion'):
+                parts.append(address_data['addressRegion'])
+            if address_data.get('postalCode'):
+                parts.append(address_data['postalCode'])
+            return ', '.join(parts)
+        return ''
 
     def close(self):
         self.session.close()

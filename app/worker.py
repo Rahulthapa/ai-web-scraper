@@ -144,6 +144,11 @@ class ScraperWorker:
         
         logger.info(f"Scraping: {url} (JS: {use_javascript})")
         
+        # Check for special site handling
+        if 'opentable.com' in url.lower():
+            use_javascript = True  # OpenTable always needs JS
+            logger.info("Detected OpenTable - using JavaScript rendering")
+        
         try:
             # Try with JavaScript first if enabled
             if use_javascript:

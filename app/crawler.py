@@ -190,6 +190,19 @@ class WebCrawler:
         # Generate URLs for popular business directories
         directory_urls = []
         
+        # Check if this is a restaurant search - prioritize OpenTable
+        is_restaurant_search = any(word in query.lower() for word in [
+            'restaurant', 'steakhouse', 'steak', 'food', 'dining', 
+            'pizza', 'sushi', 'mexican', 'italian', 'chinese', 'indian',
+            'cafe', 'bistro', 'grill', 'bar', 'pub', 'eatery'
+        ])
+        
+        if is_restaurant_search and location:
+            # OpenTable - best for restaurant data
+            directory_urls.append(
+                f"https://www.opentable.com/s?dateTime=2024-12-15T19:00&covers=2&term={encoded_business}&queryUnderstandingType=location&locationString={encoded_location}"
+            )
+        
         # Yelp
         if location:
             directory_urls.append(
@@ -201,7 +214,6 @@ class WebCrawler:
         # TripAdvisor (for restaurants/hotels)
         if any(word in query.lower() for word in ['restaurant', 'hotel', 'food', 'dining', 'steakhouse', 'steak']):
             if location:
-                # TripAdvisor search
                 directory_urls.append(
                     f"https://www.tripadvisor.com/Search?q={encoded_query}"
                 )
@@ -212,10 +224,10 @@ class WebCrawler:
                 f"https://www.yellowpages.com/search?search_terms={encoded_business}&geo_location_terms={encoded_location}"
             )
         
-        # Try to scrape each directory
+        # Return URLs for scraping
         for url in directory_urls[:max_results]:
             try:
-                logger.info(f"Trying business directory: {url}")
+                logger.info(f"Adding business directory: {url}")
                 urls.append(url)
             except Exception as e:
                 logger.warning(f"Failed to add directory URL: {e}")
