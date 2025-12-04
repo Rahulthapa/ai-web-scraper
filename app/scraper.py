@@ -72,22 +72,83 @@ class WebScraper:
             return data
 
     async def _scrape_with_playwright(self, url: str) -> Dict[str, Any]:
-        """Scrape JavaScript-rendered content using Playwright"""
+        """Scrape JavaScript-rendered content using Playwright with anti-detection"""
         try:
             from playwright.async_api import async_playwright
+            import random
             
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
+                # Launch with anti-detection settings
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-web-security',
+                        '--disable-features=IsolateOrigins,site-per-process',
+                    ]
+                )
                 
-                # Set viewport
-                await page.set_viewport_size({"width": 1920, "height": 1080})
+                # Create context with realistic browser fingerprint
+                context = await browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    locale='en-US',
+                    timezone_id='America/New_York',
+                    geolocation={'latitude': 40.7128, 'longitude': -74.0060},
+                    permissions=['geolocation'],
+                    java_script_enabled=True,
+                )
                 
-                # Navigate and wait for content
-                await page.goto(url, wait_until="networkidle", timeout=30000)
+                page = await context.new_page()
                 
-                # Wait a bit for dynamic content
-                await page.wait_for_timeout(2000)
+                # Add stealth scripts to avoid detection
+                await page.add_init_script("""
+                    // Override webdriver property
+                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    
+                    // Override plugins
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5]
+                    });
+                    
+                    // Override languages
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['en-US', 'en']
+                    });
+                    
+                    // Override chrome
+                    window.chrome = { runtime: {} };
+                    
+                    // Override permissions
+                    const originalQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({ state: Notification.permission }) :
+                            originalQuery(parameters)
+                    );
+                """)
+                
+                # Navigate with realistic behavior
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                except Exception as e:
+                    logger.warning(f"Initial page load issue: {e}, continuing...")
+                
+                # Random delay to mimic human behavior
+                await page.wait_for_timeout(random.randint(2000, 4000))
+                
+                # Scroll down to trigger lazy loading
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+                await page.wait_for_timeout(random.randint(1000, 2000))
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(random.randint(1500, 3000))
+                
+                # Scroll back up
+                await page.evaluate("window.scrollTo(0, 0)")
+                await page.wait_for_timeout(1000)
                 
                 # Get page content
                 html_content = await page.content()
@@ -145,7 +206,13 @@ class WebScraper:
                     }
                 """)
                 
+                # Close properly
+                await context.close()
                 await browser.close()
+                
+                # Check if we got meaningful content
+                if len(text_content.strip()) < 100:
+                    logger.warning(f"Low content detected ({len(text_content)} chars), page may be blocked")
                 
                 # Parse with BeautifulSoup for additional extraction
                 soup = BeautifulSoup(html_content, 'html.parser')
@@ -166,6 +233,7 @@ class WebScraper:
         except ImportError:
             raise Exception("Playwright not available. Install with: pip install playwright && playwright install chromium")
         except Exception as e:
+            logger.error(f"Playwright scraping failed: {str(e)}")
             raise Exception(f"Playwright scraping failed: {str(e)}")
 
     async def _extract_structured_data(self, soup: BeautifulSoup, url: str, html_content: str) -> Dict[str, Any]:
