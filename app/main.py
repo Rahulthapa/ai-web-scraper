@@ -201,16 +201,16 @@ async def test_get_job(job_id: str):
         storage_instance = get_storage()
         
         # Try to fetch raw data
-        response = storage_instance.client.table('scrape_jobs').select('*').eq('id', job_id).maybeSingle().execute()
+        response = storage_instance.client.table('scrape_jobs').select('*').eq('id', job_id).limit(1).execute()
         
-        if not response.data:
+        if not response.data or len(response.data) == 0:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Job not found", "job_id": job_id}
             )
         
         # Convert datetime objects to strings for JSON serialization
-        raw_data = response.data.copy()
+        raw_data = response.data[0].copy()
         for key, value in raw_data.items():
             if hasattr(value, 'isoformat'):
                 raw_data[key] = value.isoformat()
@@ -224,11 +224,11 @@ async def test_get_job(job_id: str):
                 "job_id": job_id,
                 "raw_data": raw_data,
                 "data_type": str(type(response.data)),
-                "keys": list(response.data.keys()) if isinstance(response.data, dict) else "not a dict",
+                "keys": list(raw_data.keys()) if isinstance(raw_data, dict) else "not a dict",
                 "status": raw_data.get('status'),
                 "export_format": raw_data.get('export_format'),
                 "has_created_at": 'created_at' in raw_data,
-                "created_at_type": str(type(response.data.get('created_at'))) if response.data.get('created_at') else None
+                "created_at_type": str(type(raw_data.get('created_at'))) if raw_data.get('created_at') else None
             }
         )
     except Exception as e:
