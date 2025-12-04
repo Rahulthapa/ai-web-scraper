@@ -85,15 +85,18 @@ class Storage:
             logger.debug(f"Fetching job {job_id} from database")
             
             # Try to fetch the job
-            response = self.client.table('scrape_jobs').select('*').eq('id', job_id).maybeSingle().execute()
+            response = self.client.table('scrape_jobs').select('*').eq('id', job_id).limit(1).execute()
             
-            logger.debug(f"Database response received, has data: {response.data is not None}")
-            
-            if not response.data:
-                logger.debug(f"Job {job_id} not found in database")
+            # Get first result or None
+            if response.data and len(response.data) > 0:
+                job_data = response.data[0]
+            else:
                 return None
             
-            job = response.data.copy()  # Make a copy to avoid modifying original
+            # Use job_data instead of response.data below
+            job = job_data.copy()
+            
+            logger.debug(f"Database response received, has data: {len(response.data) > 0 if response.data else False}")
             
             logger.debug(f"Job data keys: {list(job.keys())}")
             
