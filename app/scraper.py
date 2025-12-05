@@ -166,10 +166,11 @@ class WebScraper:
         return embedded
     
     def _parse_jsonld_business(self, data: Dict) -> Dict[str, Any]:
-        """Parse a JSON-LD business/restaurant entry"""
+        """Parse a JSON-LD business/restaurant entry - extracts comprehensive internal data"""
         address = data.get('address', {})
         if isinstance(address, str):
             address_str = address
+            address_parts = {}
         else:
             address_str = ', '.join(filter(None, [
                 address.get('streetAddress'),
@@ -177,20 +178,107 @@ class WebScraper:
                 address.get('addressRegion'),
                 address.get('postalCode')
             ]))
+            address_parts = {
+                'street_address': address.get('streetAddress'),
+                'city': address.get('addressLocality'),
+                'state': address.get('addressRegion'),
+                'postal_code': address.get('postalCode'),
+                'country': address.get('addressCountry'),
+            }
         
         rating = data.get('aggregateRating', {})
         
-        return {
+        # Extract opening hours
+        opening_hours = data.get('openingHoursSpecification', [])
+        hours_list = []
+        if isinstance(opening_hours, list):
+            for hours in opening_hours:
+                if isinstance(hours, dict):
+                    hours_list.append({
+                        'day': hours.get('dayOfWeek'),
+                        'opens': hours.get('opens'),
+                        'closes': hours.get('closes'),
+                    })
+        
+        # Extract menu/offers
+        menu = data.get('hasMenu', {})
+        menu_url = menu.get('url') if isinstance(menu, dict) else None
+        if not menu_url:
+            menu_url = data.get('menu')
+        
+        # Extract offers (prices, deals)
+        offers = data.get('offers', {})
+        offer_data = {}
+        if isinstance(offers, dict):
+            offer_data = {
+                'price': offers.get('price'),
+                'price_currency': offers.get('priceCurrency'),
+                'availability': offers.get('availability'),
+                'url': offers.get('url'),
+            }
+        elif isinstance(offers, list) and len(offers) > 0:
+            offer_data = {
+                'offers': [{
+                    'price': o.get('price') if isinstance(o, dict) else None,
+                    'price_currency': o.get('priceCurrency') if isinstance(o, dict) else None,
+                } for o in offers[:5]]
+            }
+        
+        # Extract cuisine types (can be string or list)
+        cuisine = data.get('servesCuisine', [])
+        if isinstance(cuisine, str):
+            cuisine = [cuisine]
+        elif not isinstance(cuisine, list):
+            cuisine = []
+        
+        # Extract additional business details
+        result = {
+            # Basic info
             'name': data.get('name'),
-            'address': address_str,
-            'phone': data.get('telephone'),
-            'cuisine': data.get('servesCuisine'),
-            'price_range': data.get('priceRange'),
-            'rating': rating.get('ratingValue') if isinstance(rating, dict) else None,
-            'review_count': rating.get('reviewCount') if isinstance(rating, dict) else None,
+            'description': data.get('description'),
             'url': data.get('url'),
             'image': data.get('image'),
+            
+            # Contact
+            'phone': data.get('telephone'),
+            'email': data.get('email'),
+            'website': data.get('url') or data.get('sameAs'),
+            
+            # Address (both formatted and parts)
+            'address': address_str,
+            'address_parts': address_parts,
+            'latitude': data.get('geo', {}).get('latitude') if isinstance(data.get('geo'), dict) else None,
+            'longitude': data.get('geo', {}).get('longitude') if isinstance(data.get('geo'), dict) else None,
+            
+            # Ratings & reviews
+            'rating': rating.get('ratingValue') if isinstance(rating, dict) else None,
+            'review_count': rating.get('reviewCount') if isinstance(rating, dict) else None,
+            'best_rating': rating.get('bestRating') if isinstance(rating, dict) else None,
+            'worst_rating': rating.get('worstRating') if isinstance(rating, dict) else None,
+            
+            # Restaurant-specific
+            'cuisine': cuisine,
+            'price_range': data.get('priceRange'),
+            'accepts_reservations': data.get('acceptsReservations'),
+            'menu_url': menu_url,
+            
+            # Hours
+            'opening_hours': hours_list if hours_list else None,
+            'opening_hours_text': data.get('openingHours'),  # Sometimes as text
+            
+            # Offers/deals
+            'offers': offer_data if offer_data else None,
+            
+            # Additional metadata
+            'business_type': data.get('@type'),
+            'founding_date': data.get('foundingDate'),
+            'number_of_employees': data.get('numberOfEmployees'),
+            'payment_accepted': data.get('paymentAccepted'),
+            'currencies_accepted': data.get('currenciesAccepted'),
         }
+        
+        # Remove None values for cleaner output
+        return {k: v for k, v in result.items() if v is not None}
     
     def _extract_from_nested(self, data: Any, result: Dict, depth: int = 0) -> None:
         """Recursively extract business data from nested structures"""
@@ -218,8 +306,9 @@ class WebScraper:
                 self._extract_from_nested(item, result, depth + 1)
     
     def _extract_yelp_data(self, soup: BeautifulSoup) -> Dict[str, Any]:
-        """Extract Yelp-specific data patterns"""
+        """Extract Yelp-specific data patterns - comprehensive internal data extraction"""
         yelp_data = {}
+        restaurants = []
         
         # Look for Yelp's data hydration scripts
         for script in soup.find_all('script'):
@@ -231,6 +320,9 @@ class WebScraper:
                     r'\"searchPageProps\":\s*({.+?})\s*,\s*\"',
                     r'\"bizDetailsPageProps\":\s*({.+?})\s*,\s*\"',
                     r'\"legacyProps\":\s*({.+?})\s*\}',
+                    r'window\.__PRELOADED_STATE__\s*=\s*({.+?});',
+                    r'\"businesses\":\s*(\[.+?\])',
+                    r'\"searchResults\":\s*(\[.+?\])',
                 ]
                 
                 for pattern in patterns:
@@ -239,11 +331,92 @@ class WebScraper:
                         try:
                             data = json.loads(match.group(1))
                             yelp_data['yelp_props'] = data
+                            
+                            # Extract businesses from Yelp data structure
+                            businesses_list = None
+                            if isinstance(data, dict):
+                                # Try common Yelp data paths
+                                businesses_list = (
+                                    data.get('searchResults') or
+                                    data.get('businesses') or
+                                    data.get('results') or
+                                    data.get('bizDetails') or
+                                    (data.get('searchPageProps', {}) or {}).get('searchResults') or
+                                    (data.get('bizDetailsPageProps', {}) or {}).get('business')
+                                )
+                            
+                            if businesses_list:
+                                if not isinstance(businesses_list, list):
+                                    businesses_list = [businesses_list]
+                                
+                                for biz in businesses_list[:50]:  # Limit to 50
+                                    if isinstance(biz, dict):
+                                        restaurant = self._parse_yelp_business(biz)
+                                        if restaurant:
+                                            restaurants.append(restaurant)
+                            
                             break
                         except json.JSONDecodeError:
                             continue
         
+        if restaurants:
+            yelp_data['restaurants'] = restaurants
+        
         return yelp_data
+    
+    def _parse_yelp_business(self, biz: Dict) -> Dict[str, Any]:
+        """Parse Yelp business data structure into standardized format"""
+        if not isinstance(biz, dict):
+            return None
+        
+        location = biz.get('location', {})
+        coordinates = biz.get('coordinates', {})
+        categories = biz.get('categories', [])
+        
+        return {
+            'name': biz.get('name'),
+            'yelp_id': biz.get('id'),
+            'alias': biz.get('alias'),
+            'url': biz.get('url'),
+            'image_url': biz.get('image_url'),
+            'photos': biz.get('photos', [])[:5],  # Limit photos
+            
+            # Ratings
+            'rating': biz.get('rating'),
+            'review_count': biz.get('review_count'),
+            
+            # Location
+            'address': ', '.join(location.get('display_address', [])) if isinstance(location, dict) else None,
+            'address_parts': {
+                'address1': location.get('address1') if isinstance(location, dict) else None,
+                'address2': location.get('address2') if isinstance(location, dict) else None,
+                'city': location.get('city') if isinstance(location, dict) else None,
+                'state': location.get('state') if isinstance(location, dict) else None,
+                'zip_code': location.get('zip_code') if isinstance(location, dict) else None,
+                'country': location.get('country') if isinstance(location, dict) else None,
+            } if isinstance(location, dict) else None,
+            'latitude': coordinates.get('latitude') if isinstance(coordinates, dict) else None,
+            'longitude': coordinates.get('longitude') if isinstance(coordinates, dict) else None,
+            
+            # Contact
+            'phone': biz.get('display_phone') or biz.get('phone'),
+            'phone_formatted': biz.get('display_phone'),
+            
+            # Business details
+            'price': biz.get('price'),  # $, $$, $$$, $$$$
+            'categories': [cat.get('title') if isinstance(cat, dict) else str(cat) for cat in categories],
+            'transactions': biz.get('transactions', []),  # pickup, delivery, restaurant_reservation
+            'is_closed': biz.get('is_closed'),
+            'is_claimed': biz.get('is_claimed'),
+            
+            # Hours
+            'hours': biz.get('hours', []),
+            
+            # Additional Yelp-specific
+            'distance': biz.get('distance'),  # in meters if from search
+            'attributes': biz.get('attributes', {}),
+            'special_hours': biz.get('special_hours'),
+        }
 
     async def _scrape_with_playwright(self, url: str) -> Dict[str, Any]:
         """Scrape JavaScript-rendered content using Playwright with anti-detection"""

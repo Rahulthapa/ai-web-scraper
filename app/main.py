@@ -269,8 +269,28 @@ async def parse_html(request: ParseHTMLRequest):
             data['embedded_data'] = embedded_data
             if 'restaurants' in embedded_data:
                 data['restaurants'] = embedded_data['restaurants']
+                logger.info(f"Found {len(embedded_data['restaurants'])} restaurants in embedded JSON data")
             if 'businesses' in embedded_data:
                 data['businesses'] = embedded_data['businesses']
+                logger.info(f"Found {len(embedded_data['businesses'])} businesses in embedded JSON data")
+        
+        # Check if we already have structured restaurant data from embedded JSON
+        # If so, prioritize it over AI extraction (faster and more accurate)
+        has_embedded_restaurants = bool(data.get('restaurants') or data.get('businesses'))
+        
+        if has_embedded_restaurants and not request.ai_prompt:
+            # Return embedded data directly - it's already structured and comprehensive
+            restaurants = data.get('restaurants', []) or data.get('businesses', [])
+            return JSONResponse(status_code=200, content={
+                "success": True,
+                "ai_filtered": False,
+                "auto_extracted": True,
+                "source": "embedded_json",
+                "extraction_method": "JSON-LD/Yelp internal data",
+                "results": restaurants,
+                "total_items": len(restaurants),
+                "note": "Data extracted from embedded JSON (JSON-LD schema or site-specific data). This is the most accurate source."
+            })
         
         # Auto-detect page type and extract structured data
         ai_filter = AIFilter()
@@ -280,6 +300,16 @@ async def parse_html(request: ParseHTMLRequest):
         
         logger.info(f"Applying extraction with prompt: {extraction_prompt[:50]}...")
         filtered_results = await ai_filter.filter_and_structure(data, extraction_prompt)
+        
+        # If we have embedded restaurants, merge them with AI results (avoid duplicates)
+        if has_embedded_restaurants and filtered_results:
+            embedded_restaurants = data.get('restaurants', []) or data.get('businesses', [])
+            # Merge, avoiding duplicates by name
+            seen_names = {r.get('name', '').lower() for r in filtered_results if r.get('name')}
+            for restaurant in embedded_restaurants:
+                if restaurant.get('name') and restaurant.get('name', '').lower() not in seen_names:
+                    filtered_results.append(restaurant)
+                    seen_names.add(restaurant.get('name', '').lower())
         
         # Check if we got meaningful results
         if filtered_results and len(filtered_results) > 0:
@@ -292,6 +322,7 @@ async def parse_html(request: ParseHTMLRequest):
                     "success": True,
                     "ai_filtered": bool(request.ai_prompt),
                     "auto_extracted": not bool(request.ai_prompt),
+                    "has_embedded_data": has_embedded_restaurants,
                     "prompt": extraction_prompt,
                     "results": filtered_results,
                     "total_items": len(filtered_results)
@@ -302,6 +333,7 @@ async def parse_html(request: ParseHTMLRequest):
             "success": True,
             "ai_filtered": False,
             "auto_extracted": False,
+            "has_embedded_data": has_embedded_restaurants,
             "data": data,
             "note": "No structured business data detected. Try adding an AI prompt to extract specific data."
         })
