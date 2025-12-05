@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import './JobForm.css'
 
 function JobForm({ onJobCreated, apiUrl, setLoading }) {
-  const [mode, setMode] = useState('url') // 'url', 'crawl', 'html', 'yelp'
+  const [mode, setMode] = useState('html') // 'html', 'url', 'crawl' - HTML first (most reliable free option)
   const [url, setUrl] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [rawHtml, setRawHtml] = useState('')
@@ -14,27 +14,6 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
   const [sameDomain, setSameDomain] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  
-  // Yelp specific
-  const [yelpTerm, setYelpTerm] = useState('')
-  const [yelpLocation, setYelpLocation] = useState('')
-  const [yelpLimit, setYelpLimit] = useState(20)
-  const [yelpSortBy, setYelpSortBy] = useState('rating')
-  const [yelpApiReady, setYelpApiReady] = useState(null)
-
-  // Check Yelp API status
-  useEffect(() => {
-    const checkYelpApi = async () => {
-      try {
-        const response = await fetch(`${apiUrl}/api/yelp/status`)
-        const data = await response.json()
-        setYelpApiReady(data.configured)
-      } catch {
-        setYelpApiReady(false)
-      }
-    }
-    checkYelpApi()
-  }, [apiUrl])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -43,43 +22,6 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
     setLoading(true)
 
     try {
-      if (mode === 'yelp') {
-        // Yelp API search
-        const params = new URLSearchParams({
-          term: yelpTerm,
-          location: yelpLocation,
-          limit: yelpLimit.toString(),
-          sort_by: yelpSortBy,
-        })
-        
-        const response = await fetch(`${apiUrl}/api/yelp/search?${params}`)
-        
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}))
-          throw new Error(errorData.detail || `Request failed (${response.status})`)
-        }
-
-        const result = await response.json()
-        
-        const fakeJob = {
-          id: `yelp-${Date.now()}`,
-          url: `Yelp: ${yelpTerm} in ${yelpLocation}`,
-          status: 'completed',
-          created_at: new Date().toISOString(),
-          completed_at: new Date().toISOString(),
-        }
-        
-        onJobCreated(fakeJob, {
-          job_id: fakeJob.id,
-          data: result.restaurants,
-          total_items: result.total,
-          filtered_items: result.total,
-        })
-        
-        setLoading(false)
-        return
-      }
-
       if (mode === 'html') {
         // Parse HTML directly
         const response = await fetch(`${apiUrl}/parse-html`, {
@@ -166,10 +108,9 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
 
   const canSubmit = () => {
     if (submitting) return false
+    if (mode === 'html') return rawHtml.length > 100
     if (mode === 'url') return !!url
     if (mode === 'crawl') return !!searchQuery
-    if (mode === 'html') return rawHtml.length > 100
-    if (mode === 'yelp') return !!yelpTerm && !!yelpLocation
     return false
   }
 
@@ -180,8 +121,17 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
       <div className="mode-tabs">
         <button 
           type="button"
+          className={`mode-tab recommended ${mode === 'html' ? 'active' : ''}`}
+          onClick={() => setMode('html')}
+          title="Most reliable - bypasses all anti-bot protection"
+        >
+          Paste HTML
+        </button>
+        <button 
+          type="button"
           className={`mode-tab ${mode === 'url' ? 'active' : ''}`}
           onClick={() => setMode('url')}
+          title="Direct URL scraping"
         >
           URL
         </button>
@@ -189,22 +139,9 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
           type="button"
           className={`mode-tab ${mode === 'crawl' ? 'active' : ''}`}
           onClick={() => setMode('crawl')}
+          title="Multi-page crawling"
         >
           Crawl
-        </button>
-        <button 
-          type="button"
-          className={`mode-tab ${mode === 'html' ? 'active' : ''}`}
-          onClick={() => setMode('html')}
-        >
-          Paste HTML
-        </button>
-        <button 
-          type="button"
-          className={`mode-tab yelp ${mode === 'yelp' ? 'active' : ''}`}
-          onClick={() => setMode('yelp')}
-        >
-          Yelp API
         </button>
       </div>
 
@@ -280,98 +217,58 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
         {mode === 'html' && (
           <div className="form-group">
             <label>Paste HTML Content</label>
+            <div className="html-instructions">
+              <div className="instruction-step">
+                <span className="step-number">1</span>
+                <span>Open the website in your browser (Yelp, OpenTable, Google Maps, etc.)</span>
+              </div>
+              <div className="instruction-step">
+                <span className="step-number">2</span>
+                <span>Press <kbd>Ctrl</kbd>+<kbd>U</kbd> (or right-click → View Page Source)</span>
+              </div>
+              <div className="instruction-step">
+                <span className="step-number">3</span>
+                <span>Press <kbd>Ctrl</kbd>+<kbd>A</kbd> to select all, then <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy</span>
+              </div>
+              <div className="instruction-step">
+                <span className="step-number">4</span>
+                <span>Paste below and add an AI prompt to extract specific data</span>
+              </div>
+            </div>
             <textarea
               value={rawHtml}
               onChange={(e) => setRawHtml(e.target.value)}
-              placeholder="Open the page in your browser, right-click -> View Page Source, copy all the HTML and paste here..."
+              placeholder="Paste the HTML source code here..."
               disabled={submitting}
               className="html-input"
               rows={8}
             />
-            <small>
+            <small className={rawHtml.length > 100 ? 'success' : ''}>
               {rawHtml.length > 0 
-                ? `${rawHtml.length.toLocaleString()} characters` 
-                : 'Paste the complete HTML source code'}
+                ? `${rawHtml.length.toLocaleString()} characters ${rawHtml.length > 100 ? '- Ready to extract!' : '- Need more content'}` 
+                : 'Works on ANY website - no bot detection possible'}
             </small>
           </div>
         )}
 
-        {mode === 'yelp' && (
-          <>
-            {yelpApiReady === false && (
-              <div className="api-warning">
-                Yelp API key not configured. Add YELP_API_KEY to environment variables.
-                <a href="https://www.yelp.com/developers/v3/manage_app" target="_blank" rel="noopener noreferrer">
-                  Get free API key
-                </a>
-              </div>
-            )}
-            
-            <div className="form-group">
-              <label>Search Term</label>
-              <input
-                type="text"
-                value={yelpTerm}
-                onChange={(e) => setYelpTerm(e.target.value)}
-                placeholder="steakhouse, pizza, sushi..."
-                required
-                disabled={submitting}
-              />
-            </div>
-
-            <div className="form-group">
-              <label>Location</label>
-              <input
-                type="text"
-                value={yelpLocation}
-                onChange={(e) => setYelpLocation(e.target.value)}
-                placeholder="Houston, TX"
-                required
-                disabled={submitting}
-              />
-            </div>
-
-            <div className="form-row">
-              <div className="form-group">
-                <label>Results</label>
-                <input
-                  type="number"
-                  value={yelpLimit}
-                  onChange={(e) => setYelpLimit(parseInt(e.target.value) || 20)}
-                  min="1"
-                  max="50"
-                  disabled={submitting}
-                />
-              </div>
-              <div className="form-group">
-                <label>Sort By</label>
-                <select
-                  value={yelpSortBy}
-                  onChange={(e) => setYelpSortBy(e.target.value)}
-                  disabled={submitting}
-                >
-                  <option value="rating">Rating</option>
-                  <option value="review_count">Review Count</option>
-                  <option value="best_match">Best Match</option>
-                  <option value="distance">Distance</option>
-                </select>
-              </div>
-            </div>
-          </>
-        )}
-
-        {(mode === 'url' || mode === 'crawl' || mode === 'html') && (
-          <div className="form-group">
-            <label>AI Extraction Prompt (optional)</label>
-            <textarea
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="Extract restaurant names, addresses, ratings..."
-              disabled={submitting}
-            />
-            <small>Describe what data you want to extract</small>
-          </div>
-        )}
+        <div className="form-group">
+          <label>AI Extraction Prompt {mode === 'html' ? '(recommended)' : '(optional)'}</label>
+          <textarea
+            value={aiPrompt}
+            onChange={(e) => setAiPrompt(e.target.value)}
+            placeholder={mode === 'html' 
+              ? "Extract all restaurant names, addresses, phone numbers, ratings, and prices as a list"
+              : "Extract restaurant names, addresses, ratings..."
+            }
+            disabled={submitting}
+          />
+          <small>
+            {mode === 'html' 
+              ? 'Describe what data you want - AI will find and structure it for you'
+              : 'Describe what data you want to extract'
+            }
+          </small>
+        </div>
 
         {(mode === 'url' || mode === 'crawl') && (
           <div className="form-row">
@@ -416,14 +313,13 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 {mode === 'html' ? (
                   <path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>
-                ) : mode === 'yelp' ? (
-                  <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>
+                ) : mode === 'crawl' ? (
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
                 ) : (
                   <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/>
                 )}
               </svg>
-              {mode === 'html' ? 'Parse HTML' : 
-               mode === 'yelp' ? 'Search Yelp' :
+              {mode === 'html' ? 'Extract Data' : 
                mode === 'crawl' ? 'Start Crawling' : 'Start Scraping'}
             </>
           )}

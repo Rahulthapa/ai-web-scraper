@@ -22,14 +22,10 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
-      # Optional: AI Providers (choose one)
-      # Google Gemini - FREE tier (recommended)
+      # Optional: AI for better data extraction
+      # Google Gemini - FREE tier (recommended for AI extraction)
       - key: GEMINI_API_KEY
         sync: false
-      # OpenAI - Paid (optional alternative)
+      # OpenAI - Paid alternative (optional)
       - key: OPENAI_API_KEY
-        sync: false
-      # Yelp Fusion API - FREE (5000 calls/day)
-      # Get key at: https://www.yelp.com/developers/v3/manage_app
-      - key: YELP_API_KEY
         sync: false
