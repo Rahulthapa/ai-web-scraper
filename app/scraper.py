@@ -872,6 +872,9 @@ class WebScraper:
             tag = f'h{level}'
             headings[tag] = [h.get_text(strip=True) for h in soup.find_all(tag)][:20]
         
+        # Extract data organized by sections (NEW: categorize by section titles)
+        sections_data = self._extract_sections(soup)
+        
         # Extract lists
         lists = []
         for ul in soup.find_all(['ul', 'ol'])[:10]:
@@ -912,6 +915,7 @@ class WebScraper:
             'images': images,
             'meta_tags': meta_tags,
             'headings': headings,
+            'sections': sections_data,  # NEW: Data organized by section titles
             'lists': lists,
             'tables': tables,
             'code_blocks': code_blocks,
@@ -921,6 +925,135 @@ class WebScraper:
             'rendered_with_javascript': False
         }
 
+    def _extract_sections(self, soup: BeautifulSoup) -> Dict[str, Any]:
+        """
+        Extract data organized by section titles.
+        Identifies sections by headings (h2, h3, h4) and groups content under each section.
+        
+        Returns:
+            Dictionary where keys are section titles and values contain section content
+        """
+        sections = {}
+        
+        # Find all section headings (h2, h3, h4 are most common for sections)
+        section_headings = []
+        for tag in ['h2', 'h3', 'h4']:
+            for heading in soup.find_all(tag):
+                heading_text = heading.get_text(strip=True)
+                if heading_text and len(heading_text) < 200:  # Reasonable section title length
+                    section_headings.append({
+                        'tag': tag,
+                        'text': heading_text,
+                        'element': heading
+                    })
+        
+        # Sort headings by their position in the document
+        section_headings.sort(key=lambda x: x['element'].sourceline if hasattr(x['element'], 'sourceline') else 0)
+        
+        # Extract content for each section
+        for i, heading_info in enumerate(section_headings):
+            heading = heading_info['element']
+            section_title = heading_info['text']
+            
+            # Find all content between this heading and the next heading
+            section_content = []
+            current = heading.next_sibling
+            
+            # Determine the next heading at same or higher level
+            next_heading = None
+            if i + 1 < len(section_headings):
+                next_heading = section_headings[i + 1]['element']
+            
+            # Collect all content until next heading
+            while current and current != next_heading:
+                if current == next_heading:
+                    break
+                
+                # Skip if we hit another heading at same or higher level
+                if hasattr(current, 'name'):
+                    if current.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                        heading_level = int(current.name[1])
+                        current_heading_level = int(heading_info['tag'][1])
+                        if heading_level <= current_heading_level:
+                            break
+                
+                # Extract text content
+                if hasattr(current, 'get_text'):
+                    text = current.get_text(strip=True, separator=' ')
+                    if text and len(text) > 3:
+                        section_content.append({
+                            'type': 'text',
+                            'content': text[:1000]  # Limit length
+                        })
+                elif isinstance(current, str):
+                    text = current.strip()
+                    if text and len(text) > 3:
+                        section_content.append({
+                            'type': 'text',
+                            'content': text[:1000]
+                        })
+                
+                # Extract lists
+                if hasattr(current, 'find_all'):
+                    for ul in current.find_all(['ul', 'ol'], recursive=False):
+                        items = [li.get_text(strip=True) for li in ul.find_all('li')]
+                        if items:
+                            section_content.append({
+                                'type': 'list',
+                                'content': items
+                            })
+                    
+                    # Extract links
+                    for link in current.find_all('a', href=True, recursive=False):
+                        href = link.get('href', '')
+                        link_text = link.get_text(strip=True)
+                        if href and link_text:
+                            section_content.append({
+                                'type': 'link',
+                                'text': link_text,
+                                'url': href
+                            })
+                
+                # Move to next sibling
+                try:
+                    current = current.next_sibling
+                except:
+                    break
+            
+            # If we have content for this section, add it
+            if section_content:
+                # Clean up section title (remove extra whitespace, normalize)
+                clean_title = ' '.join(section_title.split())
+                
+                # Combine all text content
+                combined_text = ' '.join([
+                    item['content'] for item in section_content 
+                    if item['type'] == 'text'
+                ])
+                
+                # Extract lists
+                section_lists = [
+                    item['content'] for item in section_content 
+                    if item['type'] == 'list'
+                ]
+                
+                # Extract links
+                section_links = [
+                    {'text': item['text'], 'url': item['url']} 
+                    for item in section_content 
+                    if item['type'] == 'link'
+                ]
+                
+                sections[clean_title] = {
+                    'title': clean_title,
+                    'text': combined_text[:2000] if combined_text else None,  # Limit to 2000 chars
+                    'lists': section_lists if section_lists else None,
+                    'links': section_links if section_links else None,
+                    'raw_content': section_content[:20]  # Keep first 20 items for reference
+                }
+        
+        return sections
+    
     def _detect_page_type(self, soup: BeautifulSoup, meta_tags: Dict[str, str]) -> str:
         """Detect the type of page (article, product, blog, etc.)"""
         # Check Open Graph type

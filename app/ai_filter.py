@@ -169,6 +169,10 @@ class AIFilter:
             # Prepare the content for AI
             content_text = self._prepare_content(data)
             
+            # Check if we have section-based data
+            sections = data.get('sections', {})
+            has_sections = bool(sections)
+            
             # Enhanced prompt for comprehensive restaurant data extraction
             is_comprehensive_restaurant = any(keyword in prompt.lower() for keyword in [
                 'all', 'everything', 'complete', 'comprehensive', 'amenities', 
@@ -196,26 +200,49 @@ Be extremely thorough - extract every available detail, no matter how small."""
             else:
                 system_instruction = "You are a data extraction assistant. Extract information based on the user's request."
             
+            # Add section-based categorization instructions if sections are available
+            section_instructions = ""
+            if has_sections:
+                section_instructions = f"""
+
+IMPORTANT - SECTION-BASED CATEGORIZATION:
+The page content is organized into sections with titles. Use these section titles to categorize the extracted data.
+
+AVAILABLE SECTIONS:
+{json.dumps(sections, indent=2)[:2000]}
+
+INSTRUCTIONS FOR SECTION CATEGORIZATION:
+1. Organize extracted data by the section titles where the information appears
+2. Use section titles as top-level categories in your output
+3. For example, if there's a section "Amenities & More", put all amenities data under that category
+4. If there's a section "Location & Hours", put address and hours data under that category
+5. Create a structure like: {{"section_name": {{"field1": "value1", "field2": "value2"}}}}
+6. If data doesn't fit into any section, use a "General" or "Other" category
+7. Preserve the section structure while extracting all relevant data"""
+            
             ai_prompt = f"""{system_instruction}
 
 USER REQUEST: {prompt}
+{section_instructions}
 
 WEB PAGE CONTENT:
 {content_text}
 
 INSTRUCTIONS:
 1. Extract ALL information that matches the user's request
-2. For restaurant data, include EVERY available field (amenities, menu URLs, services, etc.)
-3. Return the data as a JSON array of objects
-4. Each object should have ALL relevant key-value pairs
-5. If no matching data is found, return an empty array []
-6. Be comprehensive and include all matching items and details
-7. For menu URLs, extract ALL types: main menu, lunch, dinner, brunch, drinks, online ordering, delivery, takeout
-8. For amenities, extract everything: Wi-Fi, parking, seating, accessibility, pet-friendly, etc.
-9. Include internal data, API responses, and JavaScript variables if they contain restaurant information
+2. {"ORGANIZE DATA BY SECTION TITLES if sections are available" if has_sections else ""}
+3. For restaurant data, include EVERY available field (amenities, menu URLs, services, etc.)
+4. Return the data as a JSON array of objects
+5. Each object should have ALL relevant key-value pairs
+6. If sections are available, organize data under section categories
+7. If no matching data is found, return an empty array []
+8. Be comprehensive and include all matching items and details
+9. For menu URLs, extract ALL types: main menu, lunch, dinner, brunch, drinks, online ordering, delivery, takeout
+10. For amenities, extract everything: Wi-Fi, parking, seating, accessibility, pet-friendly, etc.
+11. Include internal data, API responses, and JavaScript variables if they contain restaurant information
 
-Return ONLY valid JSON, no explanations or markdown. Example format:
-[{{"name": "Restaurant", "menu_urls": {{"main": "url1", "lunch": "url2"}}, "amenities": ["Wi-Fi", "Parking"]}}]
+Return ONLY valid JSON, no explanations or markdown. 
+{"Example format with sections: [{\"name\": \"Restaurant\", \"sections\": {\"Amenities & More\": {\"amenities\": [\"Wi-Fi\", \"Parking\"]}, \"Location & Hours\": {\"address\": \"123 Main St\", \"hours\": \"Mon-Fri: 9am-5pm\"}}}]" if has_sections else "Example format: [{\"name\": \"Restaurant\", \"menu_urls\": {\"main\": \"url1\", \"lunch\": \"url2\"}, \"amenities\": [\"Wi-Fi\", \"Parking\"]}]"}
 
 JSON OUTPUT:"""
 
@@ -552,7 +579,10 @@ Return ONLY a JSON array of extracted items. No explanations."""
         return valid_businesses if valid_businesses else None
 
     def _prepare_content(self, data: Dict[str, Any]) -> str:
-        """Prepare web page content for AI processing"""
+        """
+        Prepare content for AI processing.
+        Includes section-based data if available for better categorization.
+        """
         parts = []
         
         if data.get("title"):
@@ -562,6 +592,20 @@ Return ONLY a JSON array of extracted items. No explanations."""
             desc = data["meta_tags"].get("description", "")
             if desc:
                 parts.append(f"DESCRIPTION: {desc}")
+        
+        # NEW: Include section-based data if available (for categorization)
+        if data.get("sections"):
+            parts.append("\n=== PAGE SECTIONS (organized by section titles) ===")
+            for section_title, section_data in data["sections"].items():
+                section_text = f"\nSECTION: {section_title}\n"
+                if section_data.get("text"):
+                    section_text += f"Text: {section_data['text'][:1000]}\n"
+                if section_data.get("lists"):
+                    section_text += f"Lists: {json.dumps(section_data['lists'][:5])}\n"
+                if section_data.get("links"):
+                    section_text += f"Links: {json.dumps(section_data['links'][:5])}\n"
+                parts.append(section_text)
+            parts.append("=== END SECTIONS ===\n")
         
         if data.get("headings"):
             for level, texts in data["headings"].items():
