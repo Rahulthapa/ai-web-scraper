@@ -31,11 +31,13 @@ class AIFilter:
                 genai.configure(api_key=self.gemini_api_key)
                 
                 # Try multiple model names in order of preference
-                # gemini-pro is the most stable and widely available
+                # gemini-2.5-flash-lite is the latest fast model
                 model_names = [
-                    'gemini-pro',           # Most stable, widely available (recommended)
-                    'gemini-1.5-pro',       # Newer version (if available)
-                    'models/gemini-pro',    # With models/ prefix (some API versions)
+                    'gemini-2.5-flash-lite',  # Latest fast model (user preference)
+                    'gemini-2.5-flash',       # Alternative flash version
+                    'gemini-pro',             # Fallback: most stable, widely available
+                    'gemini-1.5-pro',         # Fallback: newer version
+                    'models/gemini-2.5-flash-lite',  # With models/ prefix
                 ]
                 
                 for model_name in model_names:
@@ -136,16 +138,26 @@ JSON OUTPUT:"""
             except Exception as model_error:
                 # If model error, try to reinitialize with a different model
                 if "404" in str(model_error) or "not found" in str(model_error).lower():
-                    logger.warning(f"Model not found, trying to reinitialize with fallback model: {model_error}")
-                    try:
-                        import google.generativeai as genai
-                        # Try gemini-pro as fallback (most stable)
-                        self.model = genai.GenerativeModel('gemini-pro')
-                        response = self.model.generate_content(ai_prompt)
-                        result_text = response.text.strip()
-                        logger.info("Successfully used fallback model gemini-pro")
-                    except Exception as fallback_error:
-                        logger.error(f"Fallback model also failed: {fallback_error}")
+                    logger.warning(f"Model not found, trying to reinitialize with fallback models: {model_error}")
+                    import google.generativeai as genai
+                    
+                    # Try fallback models in order
+                    fallback_models = ['gemini-2.5-flash-lite', 'gemini-pro', 'gemini-1.5-pro']
+                    last_error = None
+                    for fallback_model in fallback_models:
+                        try:
+                            self.model = genai.GenerativeModel(fallback_model)
+                            response = self.model.generate_content(ai_prompt)
+                            result_text = response.text.strip()
+                            logger.info(f"Successfully used fallback model {fallback_model}")
+                            break
+                        except Exception as fallback_error:
+                            last_error = fallback_error
+                            logger.debug(f"Fallback model {fallback_model} failed: {fallback_error}")
+                            continue
+                    else:
+                        # All fallbacks failed
+                        logger.error(f"All fallback models failed. Last error: {last_error}")
                         raise model_error  # Raise original error
                 else:
                     raise
