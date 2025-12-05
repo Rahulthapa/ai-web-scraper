@@ -178,12 +178,34 @@ Return ONLY a JSON array of extracted items. No explanations."""
     async def _smart_extraction(self, data: Dict[str, Any], prompt: str) -> List[Dict[str, Any]]:
         """
         Smart extraction without AI API.
-        Uses keyword matching and pattern recognition.
+        Automatically detects page type and extracts structured data.
         """
         prompt_lower = prompt.lower()
+        
+        # Detect if this is a restaurant/business listing page
+        is_restaurant_search = any(word in prompt_lower for word in [
+            "restaurant", "steakhouse", "food", "dining", "cafe", "bar",
+            "business", "store", "shop", "hotel", "place"
+        ])
+        
+        # Auto-detect from page title/content
+        title = (data.get("title") or "").lower()
+        content = (data.get("text_content") or "").lower()
+        
+        is_yelp = "yelp" in title or "yelp" in content[:500]
+        is_google_maps = "google" in title and "map" in title
+        is_tripadvisor = "tripadvisor" in title or "tripadvisor" in content[:500]
+        is_listing_page = any(x in title for x in ["best", "top", "near", "search"])
+        
+        # Extract restaurants/businesses from listing pages
+        if is_restaurant_search or is_yelp or is_tripadvisor or is_listing_page:
+            businesses = self._extract_businesses_from_listing(data)
+            if businesses:
+                return businesses
+        
+        # Fallback to pattern-based extraction
         result = {"url": data.get("url"), "title": data.get("title")}
         
-        # Extract based on common patterns in the prompt
         if any(word in prompt_lower for word in ["price", "cost", "dollar", "$"]):
             result["prices"] = self._extract_prices(data)
         
@@ -212,6 +234,185 @@ Return ONLY a JSON array of extracted items. No explanations."""
             result["main_content"] = data.get("main_content", "")
         
         return [result]
+    
+    def _extract_businesses_from_listing(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Extract business/restaurant data from listing pages (Yelp, Google, TripAdvisor, etc.)
+        Uses multiple extraction methods and merges results.
+        """
+        businesses = []
+        
+        # Method 1: Extract from headings (h3 usually contains business names)
+        headings = data.get("headings", {})
+        h3_headings = headings.get("h3", [])
+        
+        # Method 2: Parse the main content text
+        main_content = data.get("main_content") or data.get("text_content") or ""
+        
+        # Method 3: Extract from images (alt text often has business names)
+        images = data.get("images", [])
+        image_map = {}
+        for img in images:
+            alt = img.get("alt") or img.get("title") or ""
+            if alt and len(alt) > 3:
+                # Clean up common suffixes
+                name = re.sub(r'\s+on Yelp$', '', alt)
+                name = re.sub(r'\s+- TripAdvisor$', '', name)
+                if name:
+                    image_map[name.lower()] = img.get("src", "")
+        
+        # Method 4: Extract from links
+        links = data.get("links", [])
+        link_map = {}
+        for link in links:
+            text = link.get("text", "").strip()
+            href = link.get("href", "")
+            if text and len(text) > 3 and len(text) < 100:
+                link_map[text.lower()] = href
+        
+        # Parse numbered headings (e.g., "1.Taste of Texas", "2.Steak 48")
+        for heading in h3_headings:
+            # Remove numbering like "1.", "2.", etc.
+            name = re.sub(r'^\d+\.\s*', '', heading).strip()
+            if name and len(name) > 2:
+                business = {"name": name}
+                
+                # Find associated image
+                name_lower = name.lower()
+                for img_name, img_url in image_map.items():
+                    if name_lower in img_name or img_name in name_lower:
+                        business["image_url"] = img_url
+                        break
+                
+                # Find associated link
+                for link_text, link_url in link_map.items():
+                    if name_lower in link_text or link_text in name_lower:
+                        business["url"] = link_url
+                        break
+                
+                businesses.append(business)
+        
+        # Now parse the main content to extract ratings, reviews, prices, locations
+        # Pattern: "Name Rating (Reviews) Location Price"
+        # Example: "Taste of Texas 4.5 (4.9k reviews) Memorial $$$"
+        
+        # Find rating and review patterns
+        rating_pattern = r'(\d+\.?\d*)\s*\((\d+\.?\d*k?)\s*reviews?\)'
+        price_pattern = r'(\${1,4})'
+        
+        # Try to match each business with its details
+        for business in businesses:
+            name = business.get("name", "")
+            if not name:
+                continue
+            
+            # Search for this business's details in the content
+            # Create a search pattern that looks for the name followed by rating info
+            escaped_name = re.escape(name)
+            
+            # Look for pattern: Name + rating + reviews + location + price
+            detail_pattern = rf'{escaped_name}\s*(\d+\.?\d*)\s*\((\d+\.?\d*k?)\s*reviews?\)\s*([A-Za-z\s/]+)?\s*(\${1,4})?'
+            match = re.search(detail_pattern, main_content, re.IGNORECASE)
+            
+            if match:
+                business["rating"] = float(match.group(1)) if match.group(1) else None
+                
+                # Parse review count (handle "4.9k" format)
+                review_str = match.group(2)
+                if review_str:
+                    if 'k' in review_str.lower():
+                        business["review_count"] = int(float(review_str.lower().replace('k', '')) * 1000)
+                    else:
+                        business["review_count"] = int(float(review_str))
+                
+                if match.group(3):
+                    location = match.group(3).strip()
+                    # Clean up location (remove trailing keywords)
+                    location = re.sub(r'\s*(Waitlist|Make|Halal|Locally|Fine).*$', '', location, flags=re.IGNORECASE)
+                    if location and len(location) > 1:
+                        business["neighborhood"] = location.strip()
+                
+                if match.group(4):
+                    business["price_range"] = match.group(4)
+            else:
+                # Simpler fallback: just look for rating near the name
+                simple_pattern = rf'{escaped_name}.*?(\d+\.?\d*)\s*\('
+                simple_match = re.search(simple_pattern, main_content, re.IGNORECASE | re.DOTALL)
+                if simple_match:
+                    try:
+                        rating = float(simple_match.group(1))
+                        if 1 <= rating <= 5:
+                            business["rating"] = rating
+                    except:
+                        pass
+        
+        # Also extract any businesses from the lists data
+        lists_data = data.get("lists", [])
+        for lst in lists_data:
+            for item in lst:
+                if isinstance(item, str) and len(item) > 10:
+                    # Try to parse list items that contain business info
+                    # Pattern: "Name Rating (reviews) Location Price Description"
+                    list_match = re.search(
+                        r'^(\d+\.)?([A-Za-z\s&\'\-]+?)(\d+\.?\d*)\s*\((\d+\.?\d*k?)\s*reviews?\)\s*([A-Za-z\s/]+)?\s*(\${1,4})?',
+                        item
+                    )
+                    if list_match:
+                        name = list_match.group(2).strip()
+                        # Check if we already have this business
+                        existing = next((b for b in businesses if b.get("name", "").lower() == name.lower()), None)
+                        if not existing and name:
+                            business = {
+                                "name": name,
+                                "rating": float(list_match.group(3)) if list_match.group(3) else None,
+                            }
+                            
+                            review_str = list_match.group(4)
+                            if review_str:
+                                if 'k' in review_str.lower():
+                                    business["review_count"] = int(float(review_str.lower().replace('k', '')) * 1000)
+                                else:
+                                    business["review_count"] = int(float(review_str))
+                            
+                            if list_match.group(5):
+                                business["neighborhood"] = list_match.group(5).strip()
+                            
+                            if list_match.group(6):
+                                business["price_range"] = list_match.group(6)
+                            
+                            businesses.append(business)
+        
+        # Extract categories from links
+        category_keywords = ['steakhouse', 'seafood', 'american', 'italian', 'mexican', 
+                          'japanese', 'chinese', 'thai', 'indian', 'french', 'wine bar',
+                          'sushi', 'brazilian', 'mediterranean', 'middle eastern', 'korean']
+        
+        for business in businesses:
+            name_lower = business.get("name", "").lower()
+            categories = []
+            
+            # Look for category links associated with this business
+            for link in links:
+                link_text = link.get("text", "").lower()
+                if link_text in category_keywords:
+                    # Check if this link is near the business in the content
+                    categories.append(link_text.title())
+            
+            if categories:
+                business["categories"] = list(set(categories))[:5]
+        
+        # Filter out empty or invalid businesses
+        valid_businesses = []
+        seen_names = set()
+        for b in businesses:
+            name = b.get("name", "").strip()
+            if name and name.lower() not in seen_names and len(name) > 2:
+                # Filter out non-business entries
+                if not any(skip in name.lower() for skip in ['sponsored', 'result', 'all', 'near me', 'more']):
+                    seen_names.add(name.lower())
+                    valid_businesses.append(b)
+        
+        return valid_businesses if valid_businesses else None
 
     def _prepare_content(self, data: Dict[str, Any]) -> str:
         """Prepare web page content for AI processing"""

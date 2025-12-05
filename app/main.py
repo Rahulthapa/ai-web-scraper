@@ -228,6 +228,7 @@ async def debug_recent_jobs():
 async def parse_html(request: ParseHTMLRequest):
     """
     Parse raw HTML content directly - bypasses anti-bot protection.
+    Automatically detects listing pages (Yelp, Google, etc.) and extracts structured data.
     
     How to use:
     1. Open the target page in your browser
@@ -245,39 +246,64 @@ async def parse_html(request: ParseHTMLRequest):
         
         logger.info(f"Parsing HTML content ({len(request.html)} chars)")
         
-        # Parse with BeautifulSoup
-        soup = BeautifulSoup(request.html, 'html.parser')
+        # Parse with BeautifulSoup - keep scripts first to extract JSON
+        soup_with_scripts = BeautifulSoup(request.html, 'html.parser')
         
-        # Remove script and style elements
+        # Extract embedded JSON data BEFORE removing scripts
+        scraper = WebScraper()
+        source_url = request.source_url or "pasted-html"
+        embedded_data = scraper._extract_embedded_json(soup_with_scripts, source_url)
+        
+        # Now remove scripts for text extraction
+        soup = BeautifulSoup(request.html, 'html.parser')
         for element in soup(['script', 'style', 'noscript']):
             element.decompose()
         
-        # Extract data using the scraper's method
-        scraper = WebScraper()
-        source_url = request.source_url or "pasted-html"
+        # Extract structured data
         data = await scraper._extract_structured_data(soup, source_url, request.html)
         data['source'] = 'pasted_html'
         data['html_length'] = len(request.html)
         
-        # Apply AI filtering if prompt provided
-        if request.ai_prompt:
-            logger.info(f"Applying AI filter with prompt: {request.ai_prompt[:50]}...")
-            ai_filter = AIFilter()
-            filtered_results = await ai_filter.filter_and_structure(data, request.ai_prompt)
-            
-            return JSONResponse(status_code=200, content={
-                "success": True,
-                "ai_filtered": True,
-                "prompt": request.ai_prompt,
-                "results": filtered_results,
-                "total_items": len(filtered_results)
-            })
+        # Merge embedded JSON data
+        if embedded_data:
+            data['embedded_data'] = embedded_data
+            if 'restaurants' in embedded_data:
+                data['restaurants'] = embedded_data['restaurants']
+            if 'businesses' in embedded_data:
+                data['businesses'] = embedded_data['businesses']
         
-        # Return raw parsed data
+        # Auto-detect page type and extract structured data
+        ai_filter = AIFilter()
+        
+        # Use AI prompt if provided, otherwise use smart auto-detection
+        extraction_prompt = request.ai_prompt or "Extract all restaurants, businesses, or listings with their names, ratings, reviews, prices, and locations"
+        
+        logger.info(f"Applying extraction with prompt: {extraction_prompt[:50]}...")
+        filtered_results = await ai_filter.filter_and_structure(data, extraction_prompt)
+        
+        # Check if we got meaningful results
+        if filtered_results and len(filtered_results) > 0:
+            # Check if results have actual business data vs just raw data
+            first_result = filtered_results[0]
+            has_business_data = any(key in first_result for key in ['name', 'rating', 'review_count', 'price_range'])
+            
+            if has_business_data:
+                return JSONResponse(status_code=200, content={
+                    "success": True,
+                    "ai_filtered": bool(request.ai_prompt),
+                    "auto_extracted": not bool(request.ai_prompt),
+                    "prompt": extraction_prompt,
+                    "results": filtered_results,
+                    "total_items": len(filtered_results)
+                })
+        
+        # Fallback: return raw data if smart extraction didn't find structured data
         return JSONResponse(status_code=200, content={
             "success": True,
             "ai_filtered": False,
-            "data": data
+            "auto_extracted": False,
+            "data": data,
+            "note": "No structured business data detected. Try adding an AI prompt to extract specific data."
         })
         
     except HTTPException:
