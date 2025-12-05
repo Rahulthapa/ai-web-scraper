@@ -6,6 +6,63 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# Comprehensive restaurant extraction prompt
+COMPREHENSIVE_RESTAURANT_PROMPT = """Extract ALL restaurant data with complete internal information including:
+
+BASIC INFORMATION:
+- Restaurant name, description, tagline, slogan
+- Website URL, social media links (Facebook, Instagram, Twitter)
+- Business type, establishment type
+
+CONTACT DETAILS:
+- Phone number (all formats), email address, contact form URL
+
+LOCATION DATA:
+- Full formatted address, address parts (street, city, state, zip, country)
+- GPS coordinates (latitude, longitude)
+- Neighborhood, area, parking information, public transit access
+
+RATINGS & REVIEWS:
+- Overall rating, review count, rating breakdown by category
+- Review sources (Yelp, Google, TripAdvisor)
+
+PRICING & COST:
+- Price range, average cost, menu price ranges
+- Happy hour information, special offers, deals, discounts
+
+CUISINE & MENU:
+- Cuisine types (all categories), dietary options (vegetarian, vegan, gluten-free, halal, kosher)
+- ALL menu URLs: main menu, lunch menu, dinner menu, brunch menu, drinks menu, dessert menu, online ordering URL, delivery menu URL, takeout menu URL
+- Menu items (if available), signature dishes, specialties, chef name
+
+HOURS & AVAILABILITY:
+- Opening hours (all days with times), special hours, happy hour times, brunch hours, closed days
+
+AMENITIES & FEATURES:
+- Wi-Fi availability, parking (valet, street, lot, garage), outdoor seating, patio, terrace
+- Indoor seating capacity, private dining rooms, event space, bar area, lounge
+- Live music, TV screens, wheelchair accessible, high chairs, kid-friendly
+- Pet-friendly, dress code, noise level, ambiance (casual, formal, romantic, family-friendly)
+- Good for groups, good for kids, romantic setting, business meetings, solo dining, date night
+
+SERVICES & OPTIONS:
+- Reservations (accepted, required, online booking), walk-ins, takeout, delivery (all services: DoorDash, Uber Eats, Grubhub)
+- Curbside pickup, drive-through, catering services, private events, group dining, gift cards
+
+PAYMENT & TRANSACTIONS:
+- Payment methods (cash, credit cards, mobile payments), currencies accepted, tips accepted
+
+PHOTOS & MEDIA:
+- Main image URL, photo gallery URLs, logo URL, menu images, interior/exterior photos, food photos, all image URLs
+
+ADDITIONAL METADATA:
+- Yelp ID, Google Place ID, TripAdvisor ID, OpenTable ID, business owner, awards, certifications
+
+INTERNAL DATA:
+- Any API data, JavaScript variables, internal IDs, analytics data, any other restaurant-related fields
+
+Return as a JSON array where each restaurant is a complete object with ALL available fields. Include every piece of information, no matter how small. Omit fields that are not available."""
+
 
 class AIFilter:
     """
@@ -112,7 +169,34 @@ class AIFilter:
             # Prepare the content for AI
             content_text = self._prepare_content(data)
             
-            ai_prompt = f"""You are a data extraction assistant. Analyze the following web page content and extract information based on the user's request.
+            # Enhanced prompt for comprehensive restaurant data extraction
+            is_comprehensive_restaurant = any(keyword in prompt.lower() for keyword in [
+                'all', 'everything', 'complete', 'comprehensive', 'amenities', 
+                'menu url', 'internal data', 'all data'
+            ])
+            
+            if is_comprehensive_restaurant:
+                system_instruction = """You are an expert restaurant data extraction assistant. Extract EVERY piece of restaurant-related information available, including:
+- Basic info (name, description, website, social media)
+- Contact (phone, email, all formats)
+- Location (full address, GPS, parking, transit)
+- Ratings (all sources, breakdowns, review counts)
+- Pricing (range, deals, offers, group pricing)
+- Cuisine (all types, dietary options)
+- Menu URLs (ALL types: main, lunch, dinner, brunch, drinks, online ordering, delivery, takeout)
+- Hours (all days, special hours, happy hour)
+- Amenities (Wi-Fi, parking, seating, accessibility, pet-friendly, etc.)
+- Services (reservations, takeout, delivery, catering, events)
+- Payment (all methods, mobile payments)
+- Photos (all image URLs)
+- Internal data (API responses, JavaScript variables, any restaurant-related fields)
+- Any other restaurant-related information
+
+Be extremely thorough - extract every available detail, no matter how small."""
+            else:
+                system_instruction = "You are a data extraction assistant. Extract information based on the user's request."
+            
+            ai_prompt = f"""{system_instruction}
 
 USER REQUEST: {prompt}
 
@@ -120,14 +204,18 @@ WEB PAGE CONTENT:
 {content_text}
 
 INSTRUCTIONS:
-1. Extract ONLY the information that matches the user's request
-2. Return the data as a JSON array of objects
-3. Each object should have relevant key-value pairs
-4. If no matching data is found, return an empty array []
-5. Be precise and include all matching items
+1. Extract ALL information that matches the user's request
+2. For restaurant data, include EVERY available field (amenities, menu URLs, services, etc.)
+3. Return the data as a JSON array of objects
+4. Each object should have ALL relevant key-value pairs
+5. If no matching data is found, return an empty array []
+6. Be comprehensive and include all matching items and details
+7. For menu URLs, extract ALL types: main menu, lunch, dinner, brunch, drinks, online ordering, delivery, takeout
+8. For amenities, extract everything: Wi-Fi, parking, seating, accessibility, pet-friendly, etc.
+9. Include internal data, API responses, and JavaScript variables if they contain restaurant information
 
 Return ONLY valid JSON, no explanations or markdown. Example format:
-[{{"name": "Item 1", "price": "$10"}}, {{"name": "Item 2", "price": "$20"}}]
+[{{"name": "Restaurant", "menu_urls": {{"main": "url1", "lunch": "url2"}}, "amenities": ["Wi-Fi", "Parking"]}}]
 
 JSON OUTPUT:"""
 

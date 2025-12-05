@@ -10,7 +10,7 @@ import os
 import logging
 from datetime import datetime
 
-from .models import ScrapeJobCreate, ScrapeJob, ScrapeResult, JobStatus, ParseHTMLRequest, ExtractInternalDataRequest
+from .models import ScrapeJobCreate, ScrapeJob, ScrapeResult, JobStatus, ParseHTMLRequest, ExtractInternalDataRequest, ExtractFromIndividualPagesRequest
 from .storage import Storage
 from .worker import ScraperWorker
 from .exporter import DataExporter
@@ -295,8 +295,24 @@ async def parse_html(request: ParseHTMLRequest):
         # Auto-detect page type and extract structured data
         ai_filter = AIFilter()
         
-        # Use AI prompt if provided, otherwise use smart auto-detection
-        extraction_prompt = request.ai_prompt or "Extract all restaurants, businesses, or listings with their names, ratings, reviews, prices, and locations"
+        # Use AI prompt if provided, otherwise use comprehensive restaurant prompt for restaurant pages
+        if request.ai_prompt:
+            extraction_prompt = request.ai_prompt
+        else:
+            # Check if this looks like a restaurant page
+            is_restaurant_page = any(keyword in str(data.get('title', '')).lower() or 
+                                   keyword in str(data.get('url', '')).lower() or
+                                   keyword in str(data.get('text_content', '')).lower()[:500]
+                                   for keyword in ['restaurant', 'yelp', 'opentable', 'tripadvisor', 
+                                                   'dining', 'food', 'cafe', 'steakhouse', 'menu'])
+            
+            if is_restaurant_page or has_embedded_restaurants:
+                # Use comprehensive restaurant prompt
+                from .ai_filter import COMPREHENSIVE_RESTAURANT_PROMPT
+                extraction_prompt = COMPREHENSIVE_RESTAURANT_PROMPT
+                logger.info("Using comprehensive restaurant extraction prompt (auto-detected restaurant page)")
+            else:
+                extraction_prompt = "Extract all restaurants, businesses, or listings with their names, ratings, reviews, prices, and locations"
         
         logger.info(f"Applying extraction with prompt: {extraction_prompt[:50]}...")
         filtered_results = await ai_filter.filter_and_structure(data, extraction_prompt)
@@ -396,6 +412,19 @@ async def extract_internal_data(request: ExtractInternalDataRequest):
                 if isinstance(item, dict) and ('name' in item or 'restaurant' in str(item).lower()):
                     restaurants.append(item)
         
+        # Optionally extract from individual pages for more detailed data
+        if restaurants and request.extract_individual_pages:
+            logger.info(f"Extracting detailed data from {len(restaurants)} individual restaurant pages")
+            try:
+                restaurants = await scraper.extract_from_individual_pages(
+                    restaurants=restaurants,
+                    use_javascript=True,
+                    max_concurrent=5
+                )
+                logger.info(f"Successfully extracted detailed data from individual pages")
+            except Exception as e:
+                logger.warning(f"Failed to extract from individual pages: {e}, using listing data only")
+        
         # If we found restaurants directly, return them
         if restaurants and not request.ai_prompt:
             return JSONResponse(status_code=200, content={
@@ -446,6 +475,93 @@ async def extract_internal_data(request: ExtractInternalDataRequest):
     except Exception as e:
         logger.error(f"Internal data extraction failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to extract internal data: {str(e)}")
+
+
+@app.post("/extract-from-individual-pages")
+async def extract_from_individual_pages(request: ExtractFromIndividualPagesRequest):
+    """
+    Extract detailed data from individual restaurant pages.
+    
+    This endpoint takes a list of restaurants (from listing pages) and visits each
+    individual restaurant page to extract comprehensive data like:
+    - Full addresses (street, city, state, zip)
+    - Complete amenities list
+    - All menu URLs (main, lunch, dinner, brunch, drinks, online ordering)
+    - Detailed hours, services, payment methods
+    - Photos, reviews, and other page-specific data
+    
+    Perfect for getting complete data that's only available on individual pages.
+    """
+    try:
+        from .scraper import WebScraper
+        from .ai_filter import AIFilter
+        
+        if not request.restaurants or len(request.restaurants) == 0:
+            raise HTTPException(status_code=400, detail="No restaurants provided")
+        
+        logger.info(f"Extracting detailed data from {len(request.restaurants)} individual restaurant pages")
+        
+        scraper = WebScraper()
+        
+        # Extract detailed data from individual pages
+        detailed_restaurants = await scraper.extract_from_individual_pages(
+            restaurants=request.restaurants,
+            use_javascript=request.use_javascript,
+            max_concurrent=request.max_concurrent
+        )
+        
+        if not detailed_restaurants:
+            raise HTTPException(
+                status_code=404,
+                detail="No detailed data could be extracted from individual pages"
+            )
+        
+        # Apply AI filter if prompt provided
+        if request.ai_prompt:
+            ai_filter = AIFilter()
+            logger.info(f"Applying AI extraction with prompt: {request.ai_prompt[:50]}...")
+            
+            # Process each restaurant with AI
+            ai_filtered_results = []
+            for restaurant in detailed_restaurants:
+                try:
+                    filtered = await ai_filter.filter_and_structure(restaurant, request.ai_prompt)
+                    if isinstance(filtered, list):
+                        ai_filtered_results.extend(filtered)
+                    else:
+                        ai_filtered_results.append(filtered)
+                except Exception as e:
+                    logger.warning(f"AI filtering failed for restaurant {restaurant.get('name', 'Unknown')}: {e}")
+                    ai_filtered_results.append(restaurant)
+            
+            return JSONResponse(status_code=200, content={
+                "success": True,
+                "ai_filtered": True,
+                "source": "individual_pages",
+                "extraction_method": "Individual page scraping + AI extraction",
+                "prompt": request.ai_prompt,
+                "results": ai_filtered_results,
+                "total_items": len(ai_filtered_results),
+                "pages_processed": len(detailed_restaurants)
+            })
+        
+        # Return detailed restaurants without AI filtering
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "ai_filtered": False,
+            "source": "individual_pages",
+            "extraction_method": "Individual page scraping",
+            "results": detailed_restaurants,
+            "total_items": len(detailed_restaurants),
+            "pages_processed": len(detailed_restaurants),
+            "note": "Detailed data extracted from individual restaurant pages. Includes full addresses, amenities, menu URLs, and other page-specific data."
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Individual page extraction failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to extract from individual pages: {str(e)}")
 
 
 # ============ YELP API ENDPOINTS ============

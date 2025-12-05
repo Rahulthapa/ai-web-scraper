@@ -36,6 +36,14 @@ class ExtractInternalDataRequest(BaseModel):
     scroll: Optional[bool] = True  # Scroll page to trigger lazy loading
     intercept_network: Optional[bool] = True  # Intercept API calls
     ai_prompt: Optional[str] = None  # Optional: AI extraction prompt
+    extract_individual_pages: Optional[bool] = False  # Extract from individual restaurant pages
+
+
+class ExtractFromIndividualPagesRequest(BaseModel):
+    restaurants: List[Dict[str, Any]]  # List of restaurants with URLs
+    use_javascript: Optional[bool] = True  # Use Playwright for JS pages
+    max_concurrent: Optional[int] = 5  # Max concurrent requests
+    ai_prompt: Optional[str] = None  # Optional: AI extraction prompt
 
 
 class ScrapeJob(BaseModel):

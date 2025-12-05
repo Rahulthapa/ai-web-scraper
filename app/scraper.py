@@ -1064,6 +1064,225 @@ class WebScraper:
             return ', '.join(parts)
         return ''
 
+    async def extract_from_individual_pages(
+        self,
+        restaurants: List[Dict[str, Any]],
+        use_javascript: bool = True,
+        max_concurrent: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract detailed data from individual restaurant pages.
+        Takes a list of restaurants (from listing pages) and visits each individual page
+        to get complete data like full addresses, amenities, menu URLs, etc.
+        
+        Args:
+            restaurants: List of restaurant dicts with at least 'url' or 'name'
+            use_javascript: Whether to use Playwright for JS-rendered pages
+            max_concurrent: Maximum concurrent page requests
+        
+        Returns:
+            List of restaurants with merged data from listing + individual pages
+        """
+        import asyncio
+        
+        if not restaurants:
+            return []
+        
+        logger.info(f"Extracting detailed data from {len(restaurants)} individual restaurant pages")
+        
+        # Extract URLs from restaurants
+        restaurant_urls = []
+        for restaurant in restaurants:
+            url = restaurant.get('url') or restaurant.get('website') or restaurant.get('yelp_url')
+            if url:
+                restaurant_urls.append((restaurant, url))
+            else:
+                # If no URL, keep the restaurant as-is
+                logger.warning(f"No URL found for restaurant: {restaurant.get('name', 'Unknown')}")
+        
+        if not restaurant_urls:
+            logger.warning("No restaurant URLs found to extract detailed data from")
+            return restaurants
+        
+        # Process restaurants in batches to avoid overwhelming the server
+        detailed_restaurants = []
+        
+        async def extract_single_restaurant(restaurant_data: Dict, url: str) -> Dict[str, Any]:
+            """Extract detailed data from a single restaurant page"""
+            try:
+                logger.info(f"Extracting detailed data from: {url}")
+                
+                # Get HTML content for parsing
+                html_content = None
+                if use_javascript:
+                    # For Playwright, get HTML directly
+                    try:
+                        from playwright.async_api import async_playwright
+                        async with async_playwright() as p:
+                            browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+                            context = await browser.new_context()
+                            page = await context.new_page()
+                            await page.goto(url, wait_until="networkidle", timeout=30000)
+                            await page.wait_for_timeout(2000)
+                            html_content = await page.content()
+                            await context.close()
+                            await browser.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to get HTML with Playwright: {e}")
+                
+                # Fallback: get HTML with httpx
+                if not html_content:
+                    try:
+                        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                            response = await client.get(url, headers=self.session.headers)
+                            response.raise_for_status()
+                            html_content = response.text
+                    except Exception as e:
+                        logger.warning(f"Failed to get HTML with httpx: {e}")
+                
+                if not html_content:
+                    logger.warning(f"Could not get HTML content from {url}")
+                    return restaurant_data
+                
+                # Scrape the page for structured data
+                page_data = await self.scrape(url, use_javascript=use_javascript)
+                
+                # Parse HTML for embedded data
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+                embedded_data = self._extract_embedded_json(soup, url)
+                
+                # Merge detailed data into restaurant
+                detailed_restaurant = restaurant_data.copy()
+                
+                # Extract from embedded JSON-LD (most comprehensive)
+                if embedded_data.get('restaurants'):
+                    embedded_restaurant = embedded_data['restaurants'][0]
+                    detailed_restaurant.update(embedded_restaurant)
+                elif embedded_data.get('businesses'):
+                    embedded_business = embedded_data['businesses'][0]
+                    detailed_restaurant.update(embedded_business)
+                
+                # Extract from page data
+                if page_data.get('title'):
+                    detailed_restaurant['page_title'] = page_data['title']
+                
+                # Extract structured data from HTML
+                structured_data = await self._extract_structured_data(soup, url, str(page_data))
+                
+                # Merge address data (individual pages have full addresses)
+                if structured_data.get('text_content'):
+                    # Try to extract address from text
+                    address_patterns = [
+                        r'\d+\s+[A-Za-z0-9\s,]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Way|Circle|Cir)[^,]*,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5}',
+                        r'\d+[^,]+,\s*[^,]+,\s*[A-Z]{2}\s+\d{5}',
+                    ]
+                    for pattern in address_patterns:
+                        match = re.search(pattern, structured_data['text_content'])
+                        if match and not detailed_restaurant.get('address'):
+                            detailed_restaurant['address'] = match.group(0).strip()
+                            break
+                
+                # Extract phone from page
+                phone_pattern = r'(\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})'
+                if structured_data.get('text_content') and not detailed_restaurant.get('phone'):
+                    phone_match = re.search(phone_pattern, structured_data['text_content'])
+                    if phone_match:
+                        detailed_restaurant['phone'] = phone_match.group(1)
+                
+                # Extract menu URLs from links
+                menu_urls = {}
+                for link in structured_data.get('links', []):
+                    href = link.get('href', '').lower()
+                    text = link.get('text', '').lower()
+                    
+                    if 'menu' in href or 'menu' in text:
+                        if 'lunch' in href or 'lunch' in text:
+                            menu_urls['lunch_menu'] = link.get('href')
+                        elif 'dinner' in href or 'dinner' in text:
+                            menu_urls['dinner_menu'] = link.get('href')
+                        elif 'brunch' in href or 'brunch' in text:
+                            menu_urls['brunch_menu'] = link.get('href')
+                        elif 'drink' in href or 'drink' in text or 'bar' in href:
+                            menu_urls['drinks_menu'] = link.get('href')
+                        elif 'dessert' in href or 'dessert' in text:
+                            menu_urls['dessert_menu'] = link.get('href')
+                        elif 'order' in href or 'order' in text or 'delivery' in href:
+                            menu_urls['online_ordering'] = link.get('href')
+                        else:
+                            menu_urls['main_menu'] = menu_urls.get('main_menu') or link.get('href')
+                
+                if menu_urls:
+                    detailed_restaurant['menu_urls'] = menu_urls
+                
+                # Extract amenities from text content
+                amenities = []
+                amenities_keywords = {
+                    'wifi': ['wifi', 'wi-fi', 'wireless', 'internet'],
+                    'parking': ['parking', 'valet', 'garage', 'lot'],
+                    'outdoor_seating': ['outdoor', 'patio', 'terrace', 'al fresco'],
+                    'wheelchair_accessible': ['wheelchair', 'accessible', 'ada'],
+                    'pet_friendly': ['pet', 'dog', 'friendly'],
+                    'live_music': ['live music', 'entertainment', 'band'],
+                    'tv': ['tv', 'television', 'sports'],
+                    'private_dining': ['private', 'event', 'party room'],
+                }
+                
+                text_lower = structured_data.get('text_content', '').lower()
+                for amenity, keywords in amenities_keywords.items():
+                    if any(keyword in text_lower for keyword in keywords):
+                        amenities.append(amenity)
+                
+                if amenities:
+                    detailed_restaurant['amenities'] = amenities
+                
+                # Merge all page data
+                detailed_restaurant['page_data'] = {
+                    'url': url,
+                    'scraped_at': page_data.get('scraped_at'),
+                    'html_length': len(str(page_data))
+                }
+                
+                logger.info(f"Successfully extracted detailed data for: {detailed_restaurant.get('name', 'Unknown')}")
+                return detailed_restaurant
+                
+            except Exception as e:
+                logger.error(f"Failed to extract detailed data from {url}: {str(e)}")
+                # Return original restaurant data if extraction fails
+                return restaurant_data
+        
+        # Process in batches with concurrency limit
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def extract_with_semaphore(restaurant_data, url):
+            async with semaphore:
+                return await extract_single_restaurant(restaurant_data, url)
+        
+        # Create tasks for all restaurants
+        tasks = [extract_with_semaphore(restaurant, url) for restaurant, url in restaurant_urls]
+        
+        # Execute all tasks
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Error processing restaurant {i}: {result}")
+                # Keep original restaurant data
+                if i < len(restaurants):
+                    detailed_restaurants.append(restaurants[i])
+            else:
+                detailed_restaurants.append(result)
+        
+        # Add restaurants that didn't have URLs
+        processed_names = {r.get('name', '').lower() for r in detailed_restaurants if r.get('name')}
+        for restaurant in restaurants:
+            if restaurant.get('name', '').lower() not in processed_names:
+                detailed_restaurants.append(restaurant)
+        
+        logger.info(f"Completed detailed extraction for {len(detailed_restaurants)} restaurants")
+        return detailed_restaurants
+
     def close(self):
         self.session.close()
         if self.playwright_browser:
