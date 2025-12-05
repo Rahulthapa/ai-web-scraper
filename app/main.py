@@ -327,8 +327,22 @@ async def parse_html(request: ParseHTMLRequest):
                     filtered_results.append(restaurant)
                     seen_names.add(restaurant.get('name', '').lower())
         
-        # Extract from individual pages if requested
-        if request.extract_individual_pages and filtered_results:
+        # DEFAULT BEHAVIOR: Auto-detect restaurant listing pages and extract from individual pages
+        is_restaurant_listing = any(keyword in str(data.get('url', '')).lower() or 
+                                   keyword in str(data.get('title', '')).lower() or
+                                   keyword in str(data.get('text_content', '')).lower()[:500]
+                                   for keyword in ['yelp.com/search', 'opentable.com/s', 'tripadvisor.com/search', 
+                                                  'restaurant', 'dining', 'food', 'steakhouse'])
+        
+        # If it's a restaurant listing and we have restaurant data, extract from individual pages by default
+        should_extract_individual = request.extract_individual_pages or (
+            is_restaurant_listing and 
+            filtered_results and 
+            any(r.get('url') or r.get('name') for r in filtered_results if isinstance(r, dict))
+        )
+        
+        # Extract from individual pages if requested or auto-detected
+        if should_extract_individual and filtered_results:
             logger.info(f"Extracting detailed data from individual restaurant pages")
             try:
                 # Filter restaurants with URLs

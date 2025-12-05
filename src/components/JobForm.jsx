@@ -323,7 +323,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
               <small>
                 {mode === 'html' 
                   ? '✅ Visits each restaurant\'s individual page to get complete data (full addresses, all menu URLs, amenities, hours, etc.). Takes longer but gets everything.'
-                  : '✅ Visits each restaurant\'s individual page to get complete data including full addresses, all menu URLs, amenities, and other details. Recommended for restaurant listing pages.'}
+                  : '✅ DEFAULT for restaurant pages: Automatically extracts restaurant URLs from listing pages, then visits each individual page to get complete data (full addresses, all menu URLs, amenities, etc.). Uncheck to disable.'}
               </small>
             </div>
           </div>

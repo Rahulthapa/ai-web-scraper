@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Dict, Any, List
 from datetime import datetime
 from .scraper import WebScraper
@@ -145,8 +146,22 @@ class ScraperWorker:
         
         url = job['url']
         use_javascript = job.get('use_javascript', False)
+        extract_individual_pages = job.get('extract_individual_pages', False)
         
-        logger.info(f"Scraping: {url} (JS: {use_javascript})")
+        logger.info(f"Scraping: {url} (JS: {use_javascript}, Individual Pages: {extract_individual_pages})")
+        
+        # Check if this is a restaurant listing page
+        is_restaurant_listing = self._is_restaurant_listing_page(url)
+        
+        # DEFAULT BEHAVIOR: For restaurant listing pages, always extract from individual pages
+        if is_restaurant_listing and extract_individual_pages is False:
+            logger.info("Detected restaurant listing page - enabling individual page extraction by default")
+            extract_individual_pages = True
+            use_javascript = True  # Individual pages need JS
+        
+        # If individual page extraction is enabled, use the new process
+        if extract_individual_pages and is_restaurant_listing:
+            return await self._process_restaurant_listing_with_individual_pages(url, use_javascript, errors)
         
         # Check for special site handling
         if 'opentable.com' in url.lower():
@@ -171,6 +186,89 @@ class ScraperWorker:
             errors.append(str(e)[:200])
             logger.error(f"Scraping failed for {url}: {e}")
             return []
+    
+    def _is_restaurant_listing_page(self, url: str) -> bool:
+        """Check if URL is a restaurant listing page"""
+        url_lower = url.lower()
+        
+        # Check URL patterns
+        listing_patterns = [
+            'yelp.com/search',
+            'opentable.com/s',
+            'tripadvisor.com/search',
+            'google.com/search.*restaurant',
+            'google.com/maps/search',
+            '/search.*restaurant',
+            '/search.*food',
+            '/search.*dining',
+        ]
+        
+        for pattern in listing_patterns:
+            if re.search(pattern, url_lower):
+                return True
+        
+        return False
+    
+    async def _process_restaurant_listing_with_individual_pages(
+        self,
+        listing_url: str,
+        use_javascript: bool,
+        errors: List[str]
+    ) -> List[Dict]:
+        """
+        NEW DEFAULT PROCESS for restaurant listing pages:
+        1. Extract restaurant URLs from listing page
+        2. Visit each individual restaurant page
+        3. Extract ALL data from individual pages
+        4. Return combined list
+        """
+        logger.info(f"Using default process: Extract URLs → Visit individual pages → Get complete data")
+        
+        try:
+            # STEP 1: Extract restaurant URLs from listing page
+            logger.info("Step 1: Extracting restaurant URLs from listing page...")
+            restaurant_urls = await self.scraper.extract_restaurant_urls_from_listing(
+                listing_url=listing_url,
+                use_javascript=use_javascript
+            )
+            
+            if not restaurant_urls:
+                logger.warning("No restaurant URLs found in listing page, falling back to regular scraping")
+                # Fallback to regular scraping
+                data = await self.scraper.scrape(listing_url, use_javascript=use_javascript)
+                return [data]
+            
+            logger.info(f"Step 1 Complete: Found {len(restaurant_urls)} restaurant URLs")
+            
+            # STEP 2: Create minimal restaurant objects with just URLs
+            restaurants_with_urls = [
+                {'url': url, 'source_listing_url': listing_url}
+                for url in restaurant_urls
+            ]
+            
+            # STEP 3: Visit each individual page and extract ALL data
+            logger.info(f"Step 2: Visiting {len(restaurants_with_urls)} individual restaurant pages...")
+            detailed_restaurants = await self.scraper.extract_from_individual_pages(
+                restaurants=restaurants_with_urls,
+                use_javascript=True,  # Always use JS for individual pages
+                max_concurrent=5
+            )
+            
+            logger.info(f"Step 2 Complete: Extracted data from {len(detailed_restaurants)} individual pages")
+            
+            # STEP 4: Return combined list
+            return detailed_restaurants
+            
+        except Exception as e:
+            error_msg = f"Restaurant listing process failed: {str(e)[:200]}"
+            errors.append(error_msg)
+            logger.error(error_msg, exc_info=True)
+            # Fallback to regular scraping
+            try:
+                data = await self.scraper.scrape(listing_url, use_javascript=use_javascript)
+                return [data]
+            except:
+                return []
 
     async def _apply_ai_filter(self, data: List[Dict], prompt: str, errors: List[str]) -> List[Dict]:
         """Apply AI filtering to scraped data"""

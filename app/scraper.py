@@ -1064,6 +1064,173 @@ class WebScraper:
             return ', '.join(parts)
         return ''
 
+    async def extract_restaurant_urls_from_listing(
+        self,
+        listing_url: str,
+        use_javascript: bool = True
+    ) -> List[str]:
+        """
+        Extract restaurant URLs from a listing page (Yelp, OpenTable, etc.).
+        This is Step 1: Get all restaurant URLs, don't extract data yet.
+        
+        Returns:
+            List of restaurant page URLs
+        """
+        logger.info(f"Extracting restaurant URLs from listing page: {listing_url}")
+        
+        # Scrape the listing page
+        listing_data = await self.scrape(listing_url, use_javascript=use_javascript)
+        
+        # Get HTML for parsing
+        html_content = listing_data.get('text_content', '')
+        if not html_content and use_javascript:
+            # For JS pages, we need to get HTML differently
+            try:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+                    context = await browser.new_context()
+                    page = await context.new_page()
+                    await page.goto(listing_url, wait_until="networkidle", timeout=30000)
+                    await page.wait_for_timeout(3000)
+                    html_content = await page.content()
+                    await context.close()
+                    await browser.close()
+            except Exception as e:
+                logger.warning(f"Failed to get HTML with Playwright: {e}")
+        
+        if not html_content:
+            # Fallback: use httpx
+            try:
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                    response = await client.get(listing_url, headers=self.session.headers)
+                    response.raise_for_status()
+                    html_content = response.text
+            except Exception as e:
+                logger.error(f"Failed to get HTML: {e}")
+                return []
+        
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Extract embedded JSON first (most reliable)
+        embedded_data = self._extract_embedded_json(soup, listing_url)
+        
+        restaurant_urls = []
+        seen_urls = set()
+        
+        # Method 1: Extract from embedded JSON (Yelp, OpenTable, etc.)
+        if embedded_data.get('restaurants'):
+            for restaurant in embedded_data['restaurants']:
+                url = restaurant.get('url') or restaurant.get('website') or restaurant.get('yelp_url')
+                if url and url not in seen_urls:
+                    restaurant_urls.append(url)
+                    seen_urls.add(url)
+        
+        if embedded_data.get('businesses'):
+            for business in embedded_data['businesses']:
+                url = business.get('url') or business.get('website') or business.get('yelp_url')
+                if url and url not in seen_urls:
+                    restaurant_urls.append(url)
+                    seen_urls.add(url)
+        
+        # Method 2: Extract from links (common pattern)
+        links = listing_data.get('links', [])
+        for link in links:
+            if isinstance(link, dict):
+                href = link.get('href', '')
+                text = link.get('text', '').lower()
+            else:
+                href = str(link)
+                text = ''
+            
+            if not href:
+                continue
+            
+            # Check if this looks like a restaurant page URL
+            href_lower = href.lower()
+            is_restaurant_url = (
+                ('/biz/' in href_lower and 'yelp.com' in href_lower) or
+                ('/restaurant/' in href_lower) or
+                ('/r/' in href_lower and 'opentable.com' in href_lower) or
+                ('restaurant' in text and len(text) > 5 and len(text) < 100) or
+                (any(keyword in href_lower for keyword in ['restaurant', 'dining', 'cafe', 'steakhouse']))
+            )
+            
+            if is_restaurant_url and href not in seen_urls:
+                # Normalize URL
+                if href.startswith('/'):
+                    from urllib.parse import urljoin
+                    href = urljoin(listing_url, href)
+                
+                if href.startswith('http') and href not in seen_urls:
+                    restaurant_urls.append(href)
+                    seen_urls.add(href)
+        
+        # Method 3: Extract from JavaScript variables (if available)
+        if use_javascript:
+            try:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+                    context = await browser.new_context()
+                    page = await context.new_page()
+                    await page.goto(listing_url, wait_until="networkidle", timeout=30000)
+                    await page.wait_for_timeout(3000)
+                    
+                    # Extract URLs from JavaScript
+                    js_urls = await page.evaluate("""
+                        () => {
+                            const urls = [];
+                            
+                            // Find all restaurant links
+                            const links = document.querySelectorAll('a[href*="/biz/"], a[href*="/restaurant/"], a[href*="/r/"]');
+                            links.forEach(link => {
+                                const href = link.href;
+                                if (href && (href.includes('/biz/') || href.includes('/restaurant/') || href.includes('/r/'))) {
+                                    urls.push(href);
+                                }
+                            });
+                            
+                            // Also check for data in window variables
+                            if (window.__PRELOADED_STATE__) {
+                                const data = window.__PRELOADED_STATE__;
+                                // Try to find restaurant URLs in the data
+                                const dataStr = JSON.stringify(data);
+                                const urlMatches = dataStr.match(/https?:\\/\\/[^"\\s]+\\/(?:biz|restaurant|r)\\/[^"\\s]+/g);
+                                if (urlMatches) {
+                                    urls.push(...urlMatches);
+                                }
+                            }
+                            
+                            return [...new Set(urls)];
+                        }
+                    """)
+                    
+                    for url in js_urls:
+                        if url and url not in seen_urls:
+                            restaurant_urls.append(url)
+                            seen_urls.add(url)
+                    
+                    await context.close()
+                    await browser.close()
+            except Exception as e:
+                logger.debug(f"JavaScript URL extraction failed: {e}")
+        
+        # Clean and normalize URLs
+        cleaned_urls = []
+        for url in restaurant_urls:
+            # Remove fragments and common tracking params
+            url = url.split('#')[0]
+            url = re.sub(r'[?&](utm_[^&]*|ref=[^&]*|source=[^&]*)', '', url)
+            
+            # Only keep valid restaurant URLs
+            if url and url.startswith('http') and url not in seen_urls:
+                cleaned_urls.append(url)
+                seen_urls.add(url)
+        
+        logger.info(f"Extracted {len(cleaned_urls)} restaurant URLs from listing page")
+        return cleaned_urls[:100]  # Limit to 100 URLs
+
     async def extract_from_individual_pages(
         self,
         restaurants: List[Dict[str, Any]],
