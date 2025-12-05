@@ -327,6 +327,42 @@ async def parse_html(request: ParseHTMLRequest):
                     filtered_results.append(restaurant)
                     seen_names.add(restaurant.get('name', '').lower())
         
+        # Extract from individual pages if requested
+        if request.extract_individual_pages and filtered_results:
+            logger.info(f"Extracting detailed data from individual restaurant pages")
+            try:
+                # Filter restaurants with URLs
+                restaurants_with_urls = []
+                for item in filtered_results:
+                    if isinstance(item, dict):
+                        url = item.get('url') or item.get('website') or item.get('yelp_url')
+                        if url and item.get('name'):
+                            restaurants_with_urls.append(item)
+                
+                if restaurants_with_urls:
+                    detailed_restaurants = await scraper.extract_from_individual_pages(
+                        restaurants=restaurants_with_urls,
+                        use_javascript=True,  # Use JS for individual pages
+                        max_concurrent=5
+                    )
+                    
+                    # Replace restaurants in results
+                    restaurant_names = {r.get('name', '').lower() for r in detailed_restaurants if r.get('name')}
+                    updated_results = []
+                    for item in filtered_results:
+                        if isinstance(item, dict) and item.get('name', '').lower() in restaurant_names:
+                            # Replace with detailed version
+                            detailed = next((r for r in detailed_restaurants if r.get('name', '').lower() == item.get('name', '').lower()), item)
+                            updated_results.append(detailed)
+                        else:
+                            updated_results.append(item)
+                    
+                    filtered_results = updated_results
+                    logger.info(f"Successfully extracted data from {len(detailed_restaurants)} individual pages")
+            except Exception as e:
+                logger.warning(f"Failed to extract from individual pages: {e}")
+                # Continue with original results
+        
         # Check if we got meaningful results
         if filtered_results and len(filtered_results) > 0:
             # Check if results have actual business data vs just raw data
@@ -359,6 +395,45 @@ async def parse_html(request: ParseHTMLRequest):
     except Exception as e:
         logger.error(f"HTML parsing failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to parse HTML: {str(e)}")
+
+
+@app.get("/extract-internal-data")
+async def extract_internal_data_info():
+    """GET endpoint - shows usage information for extract-internal-data"""
+    return JSONResponse(status_code=200, content={
+        "endpoint": "/extract-internal-data",
+        "method": "POST",
+        "description": "Extract internal data from a live URL using JavaScript rendering",
+        "usage": {
+            "method": "POST",
+            "url": "/extract-internal-data",
+            "content_type": "application/json",
+            "body": {
+                "url": "https://www.yelp.com/search?find_desc=steakhouse&find_loc=Houston,TX",
+                "wait_time": 5,
+                "scroll": True,
+                "intercept_network": True,
+                "extract_individual_pages": False,
+                "ai_prompt": "Extract all restaurants with complete data"
+            }
+        },
+        "parameters": {
+            "url": "Required - URL to extract internal data from",
+            "wait_time": "Optional (default: 5) - Seconds to wait for data to load",
+            "scroll": "Optional (default: true) - Scroll page to trigger lazy loading",
+            "intercept_network": "Optional (default: true) - Intercept API calls",
+            "extract_individual_pages": "Optional (default: false) - Extract from individual restaurant pages",
+            "ai_prompt": "Optional - AI extraction prompt"
+        },
+        "example_curl": """curl -X POST https://ai-web-scraper-7ctv.onrender.com/extract-internal-data \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "url": "https://www.yelp.com/search?find_desc=steakhouse&find_loc=Houston,TX",
+    "extract_individual_pages": true,
+    "ai_prompt": "Extract all restaurants with complete data"
+  }'""",
+        "note": "This endpoint requires POST method. Use a tool like curl, Postman, or the frontend interface."
+    })
 
 
 @app.post("/extract-internal-data")
@@ -729,6 +804,10 @@ async def create_job(job_request: ScrapeJobCreate, background_tasks: BackgroundT
         # Note: This field will cause an error if the database migration hasn't been run
         if job_request.use_javascript:
             job_data['use_javascript'] = True
+        
+        # Add individual page extraction field
+        if job_request.extract_individual_pages:
+            job_data['extract_individual_pages'] = True
         
         # Validate: need either URL or search_query
         if not job_data.get('url') and not job_data.get('search_query'):

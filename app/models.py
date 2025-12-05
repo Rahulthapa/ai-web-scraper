@@ -22,12 +22,14 @@ class ScrapeJobCreate(BaseModel):
     ai_prompt: Optional[str] = None
     export_format: Optional[str] = "json"
     use_javascript: Optional[bool] = False  # Use Playwright for JS-rendered pages
+    extract_individual_pages: Optional[bool] = False  # Extract from individual restaurant pages (for listing pages)
 
 
 class ParseHTMLRequest(BaseModel):
     html: str  # Raw HTML content
     source_url: Optional[str] = None  # Optional: where the HTML came from
     ai_prompt: Optional[str] = None  # Optional: AI extraction prompt
+    extract_individual_pages: Optional[bool] = False  # Extract from individual restaurant pages
 
 
 class ExtractInternalDataRequest(BaseModel):

@@ -56,6 +56,10 @@ class ScraperWorker:
                 })
                 return
 
+            # Extract from individual pages if requested and we have restaurant data
+            if job.get('extract_individual_pages'):
+                filtered_data = await self._extract_from_individual_pages_if_needed(filtered_data, job, errors)
+
             # Apply AI filtering if prompt provided
             if job.get('ai_prompt') and filtered_data:
                 filtered_data = await self._apply_ai_filter(filtered_data, job['ai_prompt'], errors)
@@ -188,3 +192,111 @@ class ScraperWorker:
         
         logger.info(f"AI filtering complete: {len(ai_filtered)} items")
         return ai_filtered if ai_filtered else data
+
+    async def _extract_from_individual_pages_if_needed(
+        self, 
+        data: List[Dict], 
+        job: Dict, 
+        errors: List[str]
+    ) -> List[Dict]:
+        """
+        Extract detailed data from individual restaurant pages if:
+        1. extract_individual_pages is enabled
+        2. We have restaurant data with URLs
+        """
+        if not job.get('extract_individual_pages'):
+            return data
+        
+        # Check if we have restaurant data
+        restaurants = []
+        for item in data:
+            # Check if this looks like restaurant data
+            if isinstance(item, dict):
+                # Check if it has restaurant indicators
+                has_restaurant_data = (
+                    'restaurants' in item or
+                    'businesses' in item or
+                    (item.get('name') and (
+                        'restaurant' in str(item.get('title', '')).lower() or
+                        'restaurant' in str(item.get('url', '')).lower() or
+                        any(keyword in str(item).lower() for keyword in ['yelp', 'opentable', 'dining', 'food'])
+                    ))
+                )
+                
+                if has_restaurant_data:
+                    # Extract restaurants from the item
+                    if 'restaurants' in item:
+                        restaurants.extend(item['restaurants'])
+                    elif 'businesses' in item:
+                        restaurants.extend(item['businesses'])
+                    else:
+                        # Single restaurant object
+                        restaurants.append(item)
+        
+        if not restaurants:
+            logger.info("No restaurant data found to extract from individual pages")
+            return data
+        
+        # Filter restaurants that have URLs
+        restaurants_with_urls = []
+        for restaurant in restaurants:
+            if isinstance(restaurant, dict):
+                url = restaurant.get('url') or restaurant.get('website') or restaurant.get('yelp_url')
+                if url:
+                    restaurants_with_urls.append(restaurant)
+        
+        if not restaurants_with_urls:
+            logger.info("No restaurant URLs found for individual page extraction")
+            return data
+        
+        logger.info(f"Extracting detailed data from {len(restaurants_with_urls)} individual restaurant pages")
+        
+        try:
+            use_javascript = job.get('use_javascript', True)  # Default to True for individual pages
+            detailed_restaurants = await self.scraper.extract_from_individual_pages(
+                restaurants=restaurants_with_urls,
+                use_javascript=use_javascript,
+                max_concurrent=5
+            )
+            
+            logger.info(f"Successfully extracted data from {len(detailed_restaurants)} individual pages")
+            
+            # Replace original restaurant data with detailed data
+            # Keep non-restaurant data items
+            result = []
+            restaurant_names = {r.get('name', '').lower() for r in detailed_restaurants if r.get('name')}
+            
+            for item in data:
+                if isinstance(item, dict):
+                    # Check if this item contains restaurants we processed
+                    if 'restaurants' in item:
+                        # Replace restaurants list
+                        item['restaurants'] = detailed_restaurants
+                        result.append(item)
+                    elif 'businesses' in item:
+                        item['businesses'] = detailed_restaurants
+                        result.append(item)
+                    elif item.get('name', '').lower() in restaurant_names:
+                        # This is a restaurant we processed, replace with detailed version
+                        detailed = next((r for r in detailed_restaurants if r.get('name', '').lower() == item.get('name', '').lower()), item)
+                        result.append(detailed)
+                    else:
+                        # Keep non-restaurant items as-is
+                        result.append(item)
+                else:
+                    result.append(item)
+            
+            # Add any detailed restaurants that weren't in original data
+            existing_names = {r.get('name', '').lower() for r in result if isinstance(r, dict) and r.get('name')}
+            for restaurant in detailed_restaurants:
+                if restaurant.get('name', '').lower() not in existing_names:
+                    result.append(restaurant)
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"Failed to extract from individual pages: {str(e)[:200]}"
+            errors.append(error_msg)
+            logger.error(error_msg, exc_info=True)
+            # Return original data if extraction fails
+            return data
