@@ -203,13 +203,15 @@ Be extremely thorough - extract every available detail, no matter how small."""
             # Add section-based categorization instructions if sections are available
             section_instructions = ""
             if has_sections:
+                # Prepare sections JSON outside f-string to avoid backslash issues
+                sections_json = json.dumps(sections, indent=2)[:2000]
                 section_instructions = f"""
 
 IMPORTANT - SECTION-BASED CATEGORIZATION:
 The page content is organized into sections with titles. Use these section titles to categorize the extracted data.
 
 AVAILABLE SECTIONS:
-{json.dumps(sections, indent=2)[:2000]}
+{sections_json}
 
 INSTRUCTIONS FOR SECTION CATEGORIZATION:
 1. Organize extracted data by the section titles where the information appears
@@ -609,9 +611,13 @@ Return ONLY a JSON array of extracted items. No explanations."""
                 if section_data.get("text"):
                     section_text += f"Text: {section_data['text'][:1000]}\n"
                 if section_data.get("lists"):
-                    section_text += f"Lists: {json.dumps(section_data['lists'][:5])}\n"
+                    # Prepare JSON outside f-string to avoid backslash issues
+                    lists_json = json.dumps(section_data['lists'][:5])
+                    section_text += f"Lists: {lists_json}\n"
                 if section_data.get("links"):
-                    section_text += f"Links: {json.dumps(section_data['links'][:5])}\n"
+                    # Prepare JSON outside f-string to avoid backslash issues
+                    links_json = json.dumps(section_data['links'][:5])
+                    section_text += f"Links: {links_json}\n"
                 parts.append(section_text)
             parts.append("=== END SECTIONS ===\n")
         
@@ -628,11 +634,15 @@ Return ONLY a JSON array of extracted items. No explanations."""
         
         if data.get("tables"):
             for i, table in enumerate(data["tables"][:3]):
-                parts.append(f"TABLE {i+1}: {json.dumps(table[:10])}")
+                # Prepare JSON outside f-string to avoid backslash issues
+                table_json = json.dumps(table[:10])
+                parts.append(f"TABLE {i+1}: {table_json}")
         
         if data.get("lists"):
             for i, lst in enumerate(data["lists"][:5]):
-                parts.append(f"LIST {i+1}: {json.dumps(lst[:10])}")
+                # Prepare JSON outside f-string to avoid backslash issues
+                list_json = json.dumps(lst[:10])
+                parts.append(f"LIST {i+1}: {list_json}")
         
         return "\n\n".join(parts)
 
