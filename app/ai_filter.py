@@ -220,6 +220,14 @@ INSTRUCTIONS FOR SECTION CATEGORIZATION:
 6. If data doesn't fit into any section, use a "General" or "Other" category
 7. Preserve the section structure while extracting all relevant data"""
             
+            # Prepare example format (outside f-string to avoid backslash issues)
+            if has_sections:
+                example_format = 'Example format with sections: [{"name": "Restaurant", "sections": {"Amenities & More": {"amenities": ["Wi-Fi", "Parking"]}, "Location & Hours": {"address": "123 Main St", "hours": "Mon-Fri: 9am-5pm"}}}]'
+            else:
+                example_format = 'Example format: [{"name": "Restaurant", "menu_urls": {"main": "url1", "lunch": "url2"}, "amenities": ["Wi-Fi", "Parking"]}]'
+            
+            section_org_instruction = "ORGANIZE DATA BY SECTION TITLES if sections are available" if has_sections else ""
+            
             ai_prompt = f"""{system_instruction}
 
 USER REQUEST: {prompt}
@@ -230,7 +238,7 @@ WEB PAGE CONTENT:
 
 INSTRUCTIONS:
 1. Extract ALL information that matches the user's request
-2. {"ORGANIZE DATA BY SECTION TITLES if sections are available" if has_sections else ""}
+2. {section_org_instruction}
 3. For restaurant data, include EVERY available field (amenities, menu URLs, services, etc.)
 4. Return the data as a JSON array of objects
 5. Each object should have ALL relevant key-value pairs
@@ -242,7 +250,7 @@ INSTRUCTIONS:
 11. Include internal data, API responses, and JavaScript variables if they contain restaurant information
 
 Return ONLY valid JSON, no explanations or markdown. 
-{"Example format with sections: [{\"name\": \"Restaurant\", \"sections\": {\"Amenities & More\": {\"amenities\": [\"Wi-Fi\", \"Parking\"]}, \"Location & Hours\": {\"address\": \"123 Main St\", \"hours\": \"Mon-Fri: 9am-5pm\"}}}]" if has_sections else "Example format: [{\"name\": \"Restaurant\", \"menu_urls\": {\"main\": \"url1\", \"lunch\": \"url2\"}, \"amenities\": [\"Wi-Fi\", \"Parking\"]}]"}
+{example_format}
 
 JSON OUTPUT:"""
 
