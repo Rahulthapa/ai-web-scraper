@@ -302,30 +302,32 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
           </div>
         )}
 
-        {/* Extract from Individual Pages Option */}
+        {error && <div className="form-error">{error}</div>}
+
+        {/* Extract from Individual Pages Option - Made More Visible */}
         {(mode === 'url' || mode === 'crawl' || mode === 'html') && (
-          <div className="form-group">
-            <label className="checkbox-group">
-              <input
-                type="checkbox"
-                checked={extractIndividualPages}
-                onChange={(e) => setExtractIndividualPages(e.target.checked)}
-                disabled={submitting}
-              />
-              <span>
-                <strong>Extract from individual pages</strong>
-                {mode === 'html' && ' (for restaurant listing pages)'}
-              </span>
-            </label>
-            <small>
-              {mode === 'html' 
-                ? 'Visits each restaurant\'s individual page to get complete data (addresses, menu URLs, amenities, etc.). Takes longer but gets everything.'
-                : 'Visits each restaurant\'s individual page to get complete data including full addresses, all menu URLs, amenities, and other details. Recommended for restaurant listing pages.'}
-            </small>
+          <div className="form-group extract-individual-pages-option">
+            <div className="checkbox-highlight">
+              <label className="checkbox-group">
+                <input
+                  type="checkbox"
+                  checked={extractIndividualPages}
+                  onChange={(e) => setExtractIndividualPages(e.target.checked)}
+                  disabled={submitting}
+                />
+                <span>
+                  <strong>🎯 Extract from individual pages</strong>
+                  {mode === 'html' && ' (for restaurant listing pages)'}
+                </span>
+              </label>
+              <small>
+                {mode === 'html' 
+                  ? '✅ Visits each restaurant\'s individual page to get complete data (full addresses, all menu URLs, amenities, hours, etc.). Takes longer but gets everything.'
+                  : '✅ Visits each restaurant\'s individual page to get complete data including full addresses, all menu URLs, amenities, and other details. Recommended for restaurant listing pages.'}
+              </small>
+            </div>
           </div>
         )}
-
-        {error && <div className="form-error">{error}</div>}
 
         <button 
           type="submit" 
