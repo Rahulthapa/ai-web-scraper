@@ -112,6 +112,7 @@ class Storage:
                 'max_depth': None,
                 'same_domain': None,
                 'use_javascript': False,
+                'extract_individual_pages': True,  # Default: enabled for restaurant pages
                 'error': None,
                 'completed_at': None
             }
