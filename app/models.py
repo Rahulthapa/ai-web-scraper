@@ -30,6 +30,14 @@ class ParseHTMLRequest(BaseModel):
     ai_prompt: Optional[str] = None  # Optional: AI extraction prompt
 
 
+class ExtractInternalDataRequest(BaseModel):
+    url: HttpUrl  # URL to extract internal data from
+    wait_time: Optional[int] = 5  # Seconds to wait for data to load
+    scroll: Optional[bool] = True  # Scroll page to trigger lazy loading
+    intercept_network: Optional[bool] = True  # Intercept API calls
+    ai_prompt: Optional[str] = None  # Optional: AI extraction prompt
+
+
 class ScrapeJob(BaseModel):
     id: str
     url: Optional[str] = None  # Optional for crawl mode

@@ -10,7 +10,7 @@ import os
 import logging
 from datetime import datetime
 
-from .models import ScrapeJobCreate, ScrapeJob, ScrapeResult, JobStatus, ParseHTMLRequest
+from .models import ScrapeJobCreate, ScrapeJob, ScrapeResult, JobStatus, ParseHTMLRequest, ExtractInternalDataRequest
 from .storage import Storage
 from .worker import ScraperWorker
 from .exporter import DataExporter
@@ -343,6 +343,109 @@ async def parse_html(request: ParseHTMLRequest):
     except Exception as e:
         logger.error(f"HTML parsing failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to parse HTML: {str(e)}")
+
+
+@app.post("/extract-internal-data")
+async def extract_internal_data(request: ExtractInternalDataRequest):
+    """
+    Extract internal data from a live URL using JavaScript rendering.
+    This captures data loaded dynamically via JavaScript, API calls, and internal variables.
+    
+    How it works:
+    1. Loads the page with Playwright (headless browser)
+    2. Waits for JavaScript to execute and data to load
+    3. Extracts data from JavaScript variables (window.__PRELOADED_STATE__, etc.)
+    4. Intercepts network requests to capture API responses
+    5. Executes custom JavaScript to extract internal data structures
+    6. Scrolls page to trigger lazy loading
+    
+    This is perfect for sites where data is loaded dynamically and not in the initial HTML.
+    """
+    try:
+        from .scraper import WebScraper
+        from .ai_filter import AIFilter
+        import json
+        
+        logger.info(f"Extracting internal data from: {request.url}")
+        
+        scraper = WebScraper()
+        
+        # Use Playwright to extract internal data
+        internal_data = await scraper._extract_internal_data(
+            url=str(request.url),
+            wait_time=request.wait_time,
+            scroll=request.scroll,
+            intercept_network=request.intercept_network
+        )
+        
+        if not internal_data:
+            raise HTTPException(
+                status_code=404,
+                detail="No internal data could be extracted. The page may not have loaded properly or may be blocking automated access."
+            )
+        
+        # Extract restaurants/businesses if found
+        restaurants = []
+        if 'restaurants' in internal_data:
+            restaurants = internal_data['restaurants']
+        elif 'businesses' in internal_data:
+            restaurants = internal_data['businesses']
+        elif 'data' in internal_data and isinstance(internal_data['data'], list):
+            # Check if data contains restaurants
+            for item in internal_data['data']:
+                if isinstance(item, dict) and ('name' in item or 'restaurant' in str(item).lower()):
+                    restaurants.append(item)
+        
+        # If we found restaurants directly, return them
+        if restaurants and not request.ai_prompt:
+            return JSONResponse(status_code=200, content={
+                "success": True,
+                "ai_filtered": False,
+                "auto_extracted": True,
+                "source": "internal_data",
+                "extraction_method": "JavaScript rendering + network interception",
+                "results": restaurants,
+                "total_items": len(restaurants),
+                "internal_data_keys": list(internal_data.keys()),
+                "note": "Data extracted from JavaScript variables and network requests. This includes dynamically loaded content."
+            })
+        
+        # Apply AI filter if prompt provided
+        if request.ai_prompt:
+            ai_filter = AIFilter()
+            logger.info(f"Applying AI extraction with prompt: {request.ai_prompt[:50]}...")
+            filtered_results = await ai_filter.filter_and_structure(internal_data, request.ai_prompt)
+            
+            if filtered_results:
+                return JSONResponse(status_code=200, content={
+                    "success": True,
+                    "ai_filtered": True,
+                    "auto_extracted": False,
+                    "source": "internal_data",
+                    "extraction_method": "JavaScript rendering + AI extraction",
+                    "prompt": request.ai_prompt,
+                    "results": filtered_results,
+                    "total_items": len(filtered_results),
+                    "internal_data_keys": list(internal_data.keys())
+                })
+        
+        # Return raw internal data
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "ai_filtered": False,
+            "auto_extracted": False,
+            "source": "internal_data",
+            "extraction_method": "JavaScript rendering + network interception",
+            "data": internal_data,
+            "internal_data_keys": list(internal_data.keys()),
+            "note": "Internal data extracted. Use an AI prompt to structure it, or access specific keys from the data object."
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Internal data extraction failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to extract internal data: {str(e)}")
 
 
 # ============ YELP API ENDPOINTS ============

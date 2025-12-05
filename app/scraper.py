@@ -583,6 +583,225 @@ class WebScraper:
             logger.error(f"Playwright scraping failed: {str(e)}")
             raise Exception(f"Playwright scraping failed: {str(e)}")
 
+    async def _extract_internal_data(
+        self, 
+        url: str, 
+        wait_time: int = 5, 
+        scroll: bool = True,
+        intercept_network: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Extract internal data from a live page using JavaScript rendering.
+        Captures data from JavaScript variables, network requests, and fully rendered DOM.
+        """
+        try:
+            from playwright.async_api import async_playwright
+            import random
+            import json as json_module
+            
+            internal_data = {
+                'javascript_variables': {},
+                'network_responses': [],
+                'dom_data': {},
+                'restaurants': [],
+                'businesses': []
+            }
+            
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--no-sandbox',
+                    ]
+                )
+                
+                context = await browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                )
+                
+                page = await context.new_page()
+                
+                # Intercept network requests to capture API responses
+                network_data = []
+                if intercept_network:
+                    async def handle_response(response):
+                        try:
+                            # Only capture JSON responses that might contain restaurant data
+                            content_type = response.headers.get('content-type', '')
+                            if 'application/json' in content_type or 'text/json' in content_type:
+                                url_pattern = response.url.lower()
+                                # Capture responses from common API endpoints
+                                if any(keyword in url_pattern for keyword in ['api', 'search', 'business', 'restaurant', 'yelp', 'opentable']):
+                                    try:
+                                        body = await response.json()
+                                        network_data.append({
+                                            'url': response.url,
+                                            'status': response.status,
+                                            'data': body
+                                        })
+                                    except:
+                                        pass
+                        except:
+                            pass
+                    
+                    page.on('response', handle_response)
+                
+                # Navigate to page
+                await page.goto(url, wait_until="networkidle", timeout=60000)
+                
+                # Wait for data to load
+                await page.wait_for_timeout(wait_time * 1000)
+                
+                # Scroll to trigger lazy loading
+                if scroll:
+                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+                    await page.wait_for_timeout(2000)
+                    await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    await page.wait_for_timeout(2000)
+                    await page.evaluate("window.scrollTo(0, 0)")
+                    await page.wait_for_timeout(1000)
+                
+                # Extract data from JavaScript variables
+                js_variables = await page.evaluate("""
+                    () => {
+                        const data = {};
+                        
+                        // Common variable names that contain data
+                        const varNames = [
+                            '__PRELOADED_STATE__',
+                            '__NEXT_DATA__',
+                            'window.__PRELOADED_STATE__',
+                            'window.__NEXT_DATA__',
+                            'pageData',
+                            'initialData',
+                            'appData',
+                            'searchPageProps',
+                            'bizDetailsPageProps',
+                            'legacyProps',
+                            'yelpData',
+                            'restaurantData'
+                        ];
+                        
+                        // Try to extract from window object
+                        for (const varName of varNames) {
+                            try {
+                                const parts = varName.split('.');
+                                let obj = window;
+                                for (const part of parts) {
+                                    if (obj && obj[part]) {
+                                        obj = obj[part];
+                                    } else {
+                                        obj = null;
+                                        break;
+                                    }
+                                }
+                                if (obj && typeof obj === 'object') {
+                                    data[varName] = obj;
+                                }
+                            } catch (e) {}
+                        }
+                        
+                        // Also check for script tags with JSON data
+                        const scripts = document.querySelectorAll('script[type="application/json"], script[id*="data"], script[id*="state"]');
+                        scripts.forEach((script, idx) => {
+                            try {
+                                const jsonData = JSON.parse(script.textContent);
+                                data[`script_${idx}`] = jsonData;
+                            } catch (e) {}
+                        });
+                        
+                        return data;
+                    }
+                """)
+                
+                internal_data['javascript_variables'] = js_variables
+                internal_data['network_responses'] = network_data
+                
+                # Extract restaurant/business data from JavaScript variables
+                restaurants_from_js = []
+                for var_name, var_data in js_variables.items():
+                    if isinstance(var_data, dict):
+                        # Try to find restaurant/business data in the structure
+                        self._extract_from_nested(var_data, {'businesses': restaurants_from_js}, 0)
+                
+                # Extract from network responses
+                restaurants_from_network = []
+                for response in network_data:
+                    if isinstance(response.get('data'), dict):
+                        self._extract_from_nested(response['data'], {'businesses': restaurants_from_network}, 0)
+                    elif isinstance(response.get('data'), list):
+                        for item in response['data']:
+                            if isinstance(item, dict) and ('name' in item or 'restaurant' in str(item).lower()):
+                                restaurants_from_network.append(item)
+                
+                # Parse and merge restaurant data
+                all_restaurants = []
+                
+                # Parse restaurants from JS variables
+                for restaurant in restaurants_from_js:
+                    if isinstance(restaurant, dict):
+                        # Check if it's a Yelp business
+                        if 'yelp_id' in restaurant or 'alias' in restaurant:
+                            parsed = self._parse_yelp_business(restaurant)
+                            if parsed:
+                                all_restaurants.append(parsed)
+                        # Check if it's JSON-LD
+                        elif restaurant.get('@type') in ['Restaurant', 'LocalBusiness']:
+                            parsed = self._parse_jsonld_business(restaurant)
+                            if parsed:
+                                all_restaurants.append(parsed)
+                        else:
+                            all_restaurants.append(restaurant)
+                
+                # Parse restaurants from network
+                for restaurant in restaurants_from_network:
+                    if isinstance(restaurant, dict):
+                        if 'yelp_id' in restaurant or 'alias' in restaurant:
+                            parsed = self._parse_yelp_business(restaurant)
+                            if parsed:
+                                all_restaurants.append(parsed)
+                        else:
+                            all_restaurants.append(restaurant)
+                
+                # Extract from rendered HTML
+                html_content = await page.content()
+                soup = BeautifulSoup(html_content, 'html.parser')
+                embedded_data = self._extract_embedded_json(soup, url)
+                
+                if embedded_data:
+                    if 'restaurants' in embedded_data:
+                        for restaurant in embedded_data['restaurants']:
+                            if restaurant not in all_restaurants:
+                                all_restaurants.append(restaurant)
+                    if 'businesses' in embedded_data:
+                        for business in embedded_data['businesses']:
+                            if business not in all_restaurants:
+                                all_restaurants.append(business)
+                
+                internal_data['restaurants'] = all_restaurants[:100]  # Limit to 100
+                internal_data['businesses'] = all_restaurants[:100]
+                
+                # Add DOM data
+                internal_data['dom_data'] = {
+                    'title': await page.title(),
+                    'url': page.url,
+                    'html_length': len(html_content)
+                }
+                
+                await context.close()
+                await browser.close()
+                
+                return internal_data
+                
+        except ImportError:
+            raise Exception("Playwright not available. Install with: pip install playwright && playwright install chromium")
+        except Exception as e:
+            logger.error(f"Internal data extraction failed: {str(e)}")
+            raise Exception(f"Internal data extraction failed: {str(e)}")
+
     async def _extract_structured_data(self, soup: BeautifulSoup, url: str, html_content: str) -> Dict[str, Any]:
         """Extract structured data from parsed HTML"""
         base_url = url
