@@ -9,6 +9,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
   const [aiPrompt, setAiPrompt] = useState('')
   const [exportFormat, setExportFormat] = useState('json')
   const [useJavascript, setUseJavascript] = useState(false)
+  const [extractIndividualPages, setExtractIndividualPages] = useState(false)
   const [maxPages, setMaxPages] = useState(10)
   const [maxDepth, setMaxDepth] = useState(2)
   const [sameDomain, setSameDomain] = useState(true)
@@ -31,6 +32,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
             html: rawHtml,
             source_url: 'pasted-html',
             ai_prompt: aiPrompt || null,
+            extract_individual_pages: extractIndividualPages,
           }),
         })
 
@@ -77,6 +79,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
           ai_prompt: aiPrompt || null,
           export_format: exportFormat,
           use_javascript: useJavascript,
+          extract_individual_pages: extractIndividualPages,
         }),
       })
 
@@ -296,6 +299,29 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
                 <span>JavaScript rendering</span>
               </label>
             </div>
+          </div>
+        )}
+
+        {/* Extract from Individual Pages Option */}
+        {(mode === 'url' || mode === 'crawl' || mode === 'html') && (
+          <div className="form-group">
+            <label className="checkbox-group">
+              <input
+                type="checkbox"
+                checked={extractIndividualPages}
+                onChange={(e) => setExtractIndividualPages(e.target.checked)}
+                disabled={submitting}
+              />
+              <span>
+                <strong>Extract from individual pages</strong>
+                {mode === 'html' && ' (for restaurant listing pages)'}
+              </span>
+            </label>
+            <small>
+              {mode === 'html' 
+                ? 'Visits each restaurant\'s individual page to get complete data (addresses, menu URLs, amenities, etc.). Takes longer but gets everything.'
+                : 'Visits each restaurant\'s individual page to get complete data including full addresses, all menu URLs, amenities, and other details. Recommended for restaurant listing pages.'}
+            </small>
           </div>
         )}
 
