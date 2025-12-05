@@ -146,17 +146,15 @@ class ScraperWorker:
         
         url = job['url']
         use_javascript = job.get('use_javascript', False)
-        extract_individual_pages = job.get('extract_individual_pages', False)
+        extract_individual_pages = job.get('extract_individual_pages', True)  # DEFAULT: enabled
         
         logger.info(f"Scraping: {url} (JS: {use_javascript}, Individual Pages: {extract_individual_pages})")
         
         # Check if this is a restaurant listing page
         is_restaurant_listing = self._is_restaurant_listing_page(url)
         
-        # DEFAULT BEHAVIOR: For restaurant listing pages, always extract from individual pages
-        if is_restaurant_listing and extract_individual_pages is False:
-            logger.info("Detected restaurant listing page - enabling individual page extraction by default")
-            extract_individual_pages = True
+        # DEFAULT BEHAVIOR: For restaurant listing pages, always extract from individual pages (unless explicitly disabled)
+        if is_restaurant_listing and extract_individual_pages:
             use_javascript = True  # Individual pages need JS
         
         # If individual page extraction is enabled, use the new process
@@ -299,10 +297,11 @@ class ScraperWorker:
     ) -> List[Dict]:
         """
         Extract detailed data from individual restaurant pages if:
-        1. extract_individual_pages is enabled
+        1. extract_individual_pages is enabled (DEFAULT: True)
         2. We have restaurant data with URLs
         """
-        if not job.get('extract_individual_pages'):
+        # Default to True if not specified (new default behavior)
+        if job.get('extract_individual_pages') is False:
             return data
         
         # Check if we have restaurant data

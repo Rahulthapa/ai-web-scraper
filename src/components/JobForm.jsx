@@ -9,7 +9,7 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
   const [aiPrompt, setAiPrompt] = useState('')
   const [exportFormat, setExportFormat] = useState('json')
   const [useJavascript, setUseJavascript] = useState(false)
-  const [extractIndividualPages, setExtractIndividualPages] = useState(false)
+  const [extractIndividualPages, setExtractIndividualPages] = useState(true)
   const [maxPages, setMaxPages] = useState(10)
   const [maxDepth, setMaxDepth] = useState(2)
   const [sameDomain, setSameDomain] = useState(true)
@@ -322,8 +322,8 @@ function JobForm({ onJobCreated, apiUrl, setLoading }) {
               </label>
               <small>
                 {mode === 'html' 
-                  ? '✅ Visits each restaurant\'s individual page to get complete data (full addresses, all menu URLs, amenities, hours, etc.). Takes longer but gets everything.'
-                  : '✅ DEFAULT for restaurant pages: Automatically extracts restaurant URLs from listing pages, then visits each individual page to get complete data (full addresses, all menu URLs, amenities, etc.). Uncheck to disable.'}
+                  ? '✅ DEFAULT: Visits each restaurant\'s individual page to get complete data (full addresses, all menu URLs, amenities, hours, etc.). Takes longer but gets everything. Uncheck to disable.'
+                  : '✅ DEFAULT: Automatically extracts restaurant URLs from listing pages, then visits each individual page to get complete data (full addresses, all menu URLs, amenities, etc.). Uncheck to disable.'}
               </small>
             </div>
           </div>

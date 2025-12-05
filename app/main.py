@@ -427,7 +427,7 @@ async def extract_internal_data_info():
                 "wait_time": 5,
                 "scroll": True,
                 "intercept_network": True,
-                "extract_individual_pages": False,
+                "extract_individual_pages": True,
                 "ai_prompt": "Extract all restaurants with complete data"
             }
         },
@@ -436,7 +436,7 @@ async def extract_internal_data_info():
             "wait_time": "Optional (default: 5) - Seconds to wait for data to load",
             "scroll": "Optional (default: true) - Scroll page to trigger lazy loading",
             "intercept_network": "Optional (default: true) - Intercept API calls",
-            "extract_individual_pages": "Optional (default: false) - Extract from individual restaurant pages",
+                "extract_individual_pages": "Optional (default: true) - Extract from individual restaurant pages",
             "ai_prompt": "Optional - AI extraction prompt"
         },
         "example_curl": """curl -X POST https://ai-web-scraper-7ctv.onrender.com/extract-internal-data \\
