@@ -4,6 +4,79 @@ import './ResultsView.css'
 function ResultsView({ job, results, loading, onExport }) {
   const [viewMode, setViewMode] = useState('table') // 'table' or 'json'
 
+  // Check if this is a local result (from HTML paste)
+  const isLocalResult = job?.id?.startsWith('html-')
+
+  // Download functions for local results
+  const downloadJSON = () => {
+    if (!results?.data) return
+    const blob = new Blob([JSON.stringify(results.data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `scrape_results_${job.id}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadCSV = () => {
+    if (!results?.data || results.data.length === 0) return
+    
+    // Flatten objects for CSV
+    const flattenObj = (obj, prefix = '') => {
+      const result = {}
+      for (const key in obj) {
+        const value = obj[key]
+        const newKey = prefix ? `${prefix}.${key}` : key
+        if (value === null || value === undefined) {
+          result[newKey] = ''
+        } else if (typeof value === 'object' && !Array.isArray(value)) {
+          Object.assign(result, flattenObj(value, newKey))
+        } else if (Array.isArray(value)) {
+          result[newKey] = value.join('; ')
+        } else {
+          result[newKey] = String(value)
+        }
+      }
+      return result
+    }
+
+    const flatData = results.data.map(item => flattenObj(item))
+    const headers = [...new Set(flatData.flatMap(obj => Object.keys(obj)))]
+    
+    const csvRows = [
+      headers.join(','),
+      ...flatData.map(row => 
+        headers.map(h => {
+          const val = row[h] || ''
+          // Escape quotes and wrap in quotes if contains comma
+          const escaped = String(val).replace(/"/g, '""')
+          return escaped.includes(',') || escaped.includes('\n') ? `"${escaped}"` : escaped
+        }).join(',')
+      )
+    ]
+    
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `scrape_results_${job.id}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExport = (format) => {
+    if (isLocalResult) {
+      // Local results - download directly
+      if (format === 'json') downloadJSON()
+      else if (format === 'csv') downloadCSV()
+      else if (format === 'excel') downloadCSV() // Fallback to CSV for Excel
+    } else {
+      // Server results - use API
+      onExport(format)
+    }
+  }
+
   const formatDate = (dateString) => {
     if (!dateString) return '-'
     return new Date(dateString).toLocaleString()
@@ -96,19 +169,19 @@ function ResultsView({ job, results, loading, onExport }) {
         <h2>Job Results</h2>
         {job.status === 'completed' && hasData && (
           <div className="export-buttons">
-            <button className="export-btn" onClick={() => onExport('json')}>
+            <button className="export-btn" onClick={() => handleExport('json')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
               </svg>
               JSON
             </button>
-            <button className="export-btn" onClick={() => onExport('csv')}>
+            <button className="export-btn" onClick={() => handleExport('csv')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
               </svg>
               CSV
             </button>
-            <button className="export-btn" onClick={() => onExport('excel')}>
+            <button className="export-btn" onClick={() => handleExport('excel')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
               </svg>

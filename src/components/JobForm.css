@@ -43,6 +43,31 @@
   color: white;
 }
 
+.mode-tab.yelp.active {
+  background: #d32323;
+}
+
+.api-warning {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+  font-size: 0.8125rem;
+  color: var(--warning);
+}
+
+.api-warning a {
+  display: block;
+  margin-top: 8px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.api-warning a:hover {
+  text-decoration: underline;
+}
+
 .html-input {
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 0.75rem;

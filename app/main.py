@@ -287,6 +287,82 @@ async def parse_html(request: ParseHTMLRequest):
         raise HTTPException(status_code=500, detail=f"Failed to parse HTML: {str(e)}")
 
 
+# ============ YELP API ENDPOINTS ============
+
+@app.get("/api/yelp/search")
+async def yelp_search(
+    term: str = Query(..., description="Search term (e.g., steakhouse, pizza)"),
+    location: str = Query(..., description="Location (e.g., Houston, TX)"),
+    limit: int = Query(20, ge=1, le=50, description="Number of results"),
+    sort_by: str = Query("rating", description="Sort by: best_match, rating, review_count, distance"),
+    price: Optional[str] = Query(None, description="Price filter: 1, 2, 3, 4 or combinations like 1,2"),
+):
+    """
+    Search Yelp for businesses/restaurants.
+    Requires YELP_API_KEY environment variable.
+    
+    Get your free API key at: https://www.yelp.com/developers/v3/manage_app
+    """
+    try:
+        from .yelp_api import YelpAPI
+        
+        yelp = YelpAPI()
+        restaurants = await yelp.search_restaurants(
+            location=location,
+            cuisine=term,
+            limit=limit,
+            sort_by=sort_by,
+            price=price,
+        )
+        
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "source": "yelp_api",
+            "location": location,
+            "term": term,
+            "total": len(restaurants),
+            "restaurants": restaurants,
+        })
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Yelp API error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Yelp API error: {str(e)}")
+
+
+@app.get("/api/yelp/business/{business_id}")
+async def yelp_business_details(business_id: str):
+    """Get detailed information about a specific Yelp business."""
+    try:
+        from .yelp_api import YelpAPI
+        
+        yelp = YelpAPI()
+        details = await yelp.get_business_details(business_id)
+        
+        return JSONResponse(status_code=200, content={
+            "success": True,
+            "business": details,
+        })
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Yelp API error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Yelp API error: {str(e)}")
+
+
+@app.get("/api/yelp/status")
+async def yelp_api_status():
+    """Check if Yelp API is configured."""
+    import os
+    has_key = bool(os.getenv("YELP_API_KEY"))
+    return JSONResponse(status_code=200, content={
+        "configured": has_key,
+        "message": "Yelp API is ready" if has_key else "YELP_API_KEY not set. Get your free key at https://www.yelp.com/developers/v3/manage_app"
+    })
+
+
 @app.get("/test/job/{job_id}")
 async def test_get_job(job_id: str):
     """Test endpoint to diagnose job fetching issues - returns raw data"""
